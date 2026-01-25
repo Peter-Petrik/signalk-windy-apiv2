@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.0.4 - Separation of Concerns (Stabilized Persistence)
+ * v1.0.5 - Lifecycle Compatibility Fix
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -21,8 +21,11 @@ module.exports = function (app) {
   plugin.name = 'Windy API v2 Reporter';
   plugin.description = 'Reports weather and position data to Windy.com API v2';
 
-  // Define a private path for internal state, separate from the config file
-  const stateFile = path.join(app.getDataDirPath(), 'state.json');
+  // Helper to safely get the state file path only when the app object is ready
+  const getStateFilePath = () => {
+    const dataDir = app.getDataDirPath();
+    return path.join(dataDir, 'state.json');
+  };
 
   plugin.schema = {
     type: 'object',
@@ -142,8 +145,10 @@ module.exports = function (app) {
       pathMap: settings.pathMap || {} 
     };
 
-    // Load internal movement state from private file instead of settings
+    // Load internal movement state from private file
+    // app.getDataDirPath() is now safe to call inside start()
     try {
+      const stateFile = getStateFilePath();
       if (fs.existsSync(stateFile)) {
         const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
         lastSentPos = state.lastSentPos || { lat: 0, lon: 0 };
@@ -179,9 +184,12 @@ module.exports = function (app) {
     
     // Save movement state to private file (Does not touch config/settings.json)
     try {
+      const dataDir = app.getDataDirPath();
+      const stateFile = getStateFilePath();
       const state = { lastSentPos, currentDistance, nextRunTime };
-      if (!fs.existsSync(app.getDataDirPath())) {
-        fs.mkdirSync(app.getDataDirPath(), { recursive: true });
+      
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
       }
       fs.writeFileSync(stateFile, JSON.stringify(state));
     } catch (e) { app.error('Failed to save state file:', e.message); }

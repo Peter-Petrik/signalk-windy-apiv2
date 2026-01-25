@@ -2,6 +2,12 @@
 
 All notable changes to the Signal K Windy API v2 Reporter will be documented in this file.
 
+## [1.0.5] - 2026-01-26
+
+### Fixed
+- **Startup Crash**: Resolved `app.getDataDirPath is not a function` error by deferring path resolution until the plugin `start()` lifecycle event.
+- **State Persistence**: Relocated state file path initialization to ensure Signal K helper functions are fully available before use.
+
 ## [1.0.4] - 2026-01-26
 
 ### Fixed
