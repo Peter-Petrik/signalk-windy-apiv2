@@ -1,11 +1,13 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.0.3 - Strict API v2 Compliance & Metadata Restore
+ * v1.0.4 - Separation of Concerns (Stabilized Persistence)
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
- * Includes Movement Guard to optimize map updates and State Persistence.
+ * Includes Movement Guard and Independent State Persistence.
  */
 
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 module.exports = function (app) {
   let timer = null;
@@ -18,6 +20,9 @@ module.exports = function (app) {
   plugin.id = 'signalk-windy-apiv2';
   plugin.name = 'Windy API v2 Reporter';
   plugin.description = 'Reports weather and position data to Windy.com API v2';
+
+  // Define a private path for internal state, separate from the config file
+  const stateFile = path.join(app.getDataDirPath(), 'state.json');
 
   plugin.schema = {
     type: 'object',
@@ -137,14 +142,16 @@ module.exports = function (app) {
       pathMap: settings.pathMap || {} 
     };
 
-    // Load persisted state to maintain continuity across server restarts
-    const savedOptions = app.readPluginOptions();
-    if (savedOptions && savedOptions.state) {
-      lastSentPos = savedOptions.state.lastSentPos || { lat: 0, lon: 0 };
-      currentDistance = savedOptions.state.currentDistance || 0;
-      nextRunTime = savedOptions.state.nextRunTime || 0;
-      if (lastSentPos.lat) kx = Math.cos(lastSentPos.lat * Math.PI / 180);
-    }
+    // Load internal movement state from private file instead of settings
+    try {
+      if (fs.existsSync(stateFile)) {
+        const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        lastSentPos = state.lastSentPos || { lat: 0, lon: 0 };
+        currentDistance = state.currentDistance || 0;
+        nextRunTime = state.nextRunTime || 0;
+        if (lastSentPos.lat) kx = Math.cos(lastSentPos.lat * Math.PI / 180);
+      }
+    } catch (e) { app.debug('Starting with fresh internal state.'); }
 
     // Determine if the plugin should report immediately or wait based on persisted nextRunTime
     const remainingTime = nextRunTime - Date.now();
@@ -169,11 +176,16 @@ module.exports = function (app) {
 
   plugin.stop = function () {
     if (timer) clearTimeout(timer);
-    // Persist position and distance state to the settings file on shutdown
-    app.savePluginOptions({
-      ...app.readPluginOptions(),
-      state: { lastSentPos, currentDistance, nextRunTime }
-    });
+    
+    // Save movement state to private file (Does not touch config/settings.json)
+    try {
+      const state = { lastSentPos, currentDistance, nextRunTime };
+      if (!fs.existsSync(app.getDataDirPath())) {
+        fs.mkdirSync(app.getDataDirPath(), { recursive: true });
+      }
+      fs.writeFileSync(stateFile, JSON.stringify(state));
+    } catch (e) { app.error('Failed to save state file:', e.message); }
+
     app.setPluginStatus('Stopped');
   };
 

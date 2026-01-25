@@ -2,6 +2,12 @@
 
 All notable changes to the Signal K Windy API v2 Reporter will be documented in this file.
 
+## [1.0.4] - 2026-01-26
+
+### Fixed
+* **State Persistence Conflict**: Resolved a race condition where the plugin's internal state updates (position, distance, and timers) could overwrite user configuration settings (API keys, credentials) during server restarts or configuration changes.
+* **Separation of Concerns**: Migrated internal plugin state (GPS tracking and reporting schedule) to a dedicated `state.json` file in the plugin's data directory, independent of the main Signal K `settings.json` file.
+
 ## [1.0.3] - 2026-01-25
 
 ### Added

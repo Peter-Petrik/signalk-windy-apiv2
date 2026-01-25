@@ -75,7 +75,16 @@ Settings are organized into four logical sections to maintain a streamlined user
 
 ---
 
-## 🛠️ Troubleshooting & Monitoring
+## 🛠️ Troubleshooting & State Management
+
+Starting with v1.0.4, the plugin manages its internal tracking data independently. If you need to inspect or reset the internal movement state without touching your API credentials, the file is located at:
+
+`~/.signalk/plugin-config-data/signalk-windy-apiv2/state.json`
+
+This file contains:
+- `lastSentPos`: The last GPS coordinate successfully sent to Windy.
+- `currentDistance`: The meters traveled since the last map update.
+- `nextRunTime`: The millisecond timestamp for the next scheduled transmission.
 
 If the plugin does not appear to be reporting data, or if you want to verify the new **State Persistence** logic after a restart, you can monitor the logs directly from the server command line.
 
@@ -137,4 +146,4 @@ When monitoring the logs, these specific events confirm the plugin's internal lo
 * **`API Error: 401`**: Unauthorized access. Check your **Station Password** and **API Key**.
 
 ## License
-Apache-2.0
+Copyright 2026 Peter Petrik. Licensed under the Apache-2.0 License.
