@@ -1,0 +1,44 @@
+{
+  "name": "signalk-windy-apiv2",
+  "version": "1.0.0",
+  "description": "Signal K plugin to report weather data (Wind, Temp, Pressure, Humidity) to Windy.com API v2.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --check index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Peter-Petrik/signalk-windy-apiv2.git"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-weather",
+    "windy",
+    "weather",
+    "pws",
+    "instrumentation"
+  ],
+  "author": {
+    "name": "Peter Petrik",
+    "url": "https://peterpetrik.com"
+  },
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/Peter-Petrik/signalk-windy-apiv2/issues"
+  },
+  "homepage": "https://github.com/Peter-Petrik/signalk-windy-apiv2#readme",
+  "signalk": {
+    "pluginId": "signalk-windy-apiv2",
+    "displayName": "Windy API v2 Reporter",
+    "icon": "icon.svg"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "files": [
+    "index.js",
+    "package.json",
+    "README.md",
+    "icon.svg"
+  ]
+}
