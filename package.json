@@ -1,7 +1,7 @@
 {
   "name": "signalk-windy-apiv2",
-  "version": "1.0.0",
-  "description": "Signal K plugin to report weather data (Wind, Temp, Pressure, Humidity) to Windy.com API v2.",
+  "version": "1.0.1",
+  "description": "Signal K plugin to report weather data (Wind, Temp, Pressure, Humidity) to Windy.com API v2 with state persistence.",
   "main": "index.js",
   "scripts": {
     "test": "node --check index.js"
@@ -15,8 +15,7 @@
     "signalk-category-weather",
     "windy",
     "weather",
-    "pws",
-    "instrumentation"
+    "pws"
   ],
   "author": {
     "name": "Peter Petrik",

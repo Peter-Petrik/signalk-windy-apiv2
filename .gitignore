@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Local Signal K Config & Persistence State
+# DO NOT remove this; it protects your private API keys
+plugin-config-data/
+*.json
+!package.json
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors
+.vscode/
+.idea/

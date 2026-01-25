@@ -58,6 +58,7 @@ Settings are organized into four logical sections to maintain a streamlined user
 
 ## 💡 Pro Tips
 * **Movement Guard**: The **Delta** value tracks distance since the last map update. The location is only sent to the API when it exceeds **Minimum Movement** threshold.
+* **State Persistence**: On server restart, the plugin automatically reloads the last reported position and the remaining time on the reporting interval. This ensures the countdown resumes exactly where it left off and the Movement Guard maintains accurate travel distance tracking.
 * **GPS Fix**: The plugin will display `Waiting for GPS fix...` and pause transmissions if valid coordinates are unavailable.
 * **Native Units**: This plugin utilizes Signal K's native **m/s** for wind and gusts, passing them directly to Windy to ensure 1:1 data accuracy.
 * **Open Data**: Choosing `Public` contributes the station's weather data to the global meteorological community via Windy's aggregator.
