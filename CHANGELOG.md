@@ -2,6 +2,28 @@
 
 All notable changes to the Signal K Windy API v2 Reporter will be documented in this file.
 
+## [1.0.2] - 2026-01-25
+
+### Added
+- **Movement Guard**: Implemented Equirectangular (Cheap Ruler) projection logic to track vessel movement.
+- **State Persistence**: Added logic to save `currentDistance` and `nextRunTime` to `settings.json` so reporting resumes accurately after a restart.
+- **Force Update Toggle**: Added a configuration option to bypass the movement guard and send GPS data on every interval.
+
+### Fixed
+- **UI Persistence**: Corrected the JSON schema structure (nested properties) to fix the bug where configuration fields appeared blank upon page refresh.
+- **Unit Conversions**: 
+  - Barometric pressure now correctly converts from Pa to hPa.
+  - Humidity now correctly converts from ratio (0..1) to percentage (0..100).
+- **Identity Sync**: Aligned `plugin.id` with `package.json` to ensure Signal K correctly maps settings and state.
+
+### Changed
+- **Schema Documentation**: Rewrote all UI descriptions to a neutral, third-person professional standard, removing all "you/your" phrasing.
+- **Performance**: Optimized position subscription to use the Cheap Ruler scaler (`kx`) to minimize trig calculations.
+
+### Maintenance
+- **Diagnostic Documentation**: Expanded the `README.md` with a comprehensive Troubleshooting section, including `journalctl` diagnostic commands, detailed log event explanations, and status message definitions.
+- **Support Workflows**: Formalized diagnostic reporting procedures to assist users in providing clean, redacted log summaries for troubleshooting.
+
 ## [1.0.1] - 2026-01-25
 ### Added
 - **State Persistence Layer**: Integrated native Signal K persistence using `app.savePluginOptions` and `app.readPluginOptions` to store the plugin's operational state (last position, distance, and timer) across server reboots.
@@ -25,8 +47,10 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 
 ### Changed
 - **Native m/s Integrity**: Standardized all wind speed and gust reporting to utilize Signal K's native meters-per-second metric, ensuring 1:1 accuracy without rounding errors from unit conversion.
-- **UI Security**: Implemented password-type masking for the Global API Key and Station Password in the Signal K configuration UI.
 - **Privacy Controls**: Standardized "Share Options" to allow users to explicitly choose between Public (Open Data) and Private (Windy Only) visibility.
+
+### Security
+- **Credential Masking**: Forced sensitive fields (`apikey`, `password`) to use the `password` format in the HTML schema to prevent shoulder-surfing and browser autocomplete exposure.
 
 ### Fixed
 - **Temperature Unit Correction**: Fixed a mapping error where temperature was being reported in Kelvin; values are now correctly converted to Celsius for Windy compatibility.
@@ -40,3 +64,7 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 - **Identity Logic**: Established the first schema for vessel name and type as it appears on the Windy station list.
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
+
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v0.1.0...v1.0.0

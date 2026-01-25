@@ -63,5 +63,68 @@ Settings are organized into four logical sections to maintain a streamlined user
 * **Native Units**: This plugin utilizes Signal K's native **m/s** for wind and gusts, passing them directly to Windy to ensure 1:1 data accuracy.
 * **Open Data**: Choosing `Public` contributes the station's weather data to the global meteorological community via Windy's aggregator.
 
+---
+
+## 🛠️ Troubleshooting & Monitoring
+
+If the plugin does not appear to be reporting data, or if you want to verify the new **State Persistence** logic after a restart, you can monitor the logs directly from the server command line.
+
+### Real-Time Log Monitoring
+To stream logs specifically for this plugin and see transmissions as they happen:
+```bash
+journalctl -u signalk-server -f | grep "signalk-windy-apiv2"
+```
+
+### Verifying State Persistence (v1.0.1+)
+After a Signal K server restart, you can confirm that the plugin has successfully recovered its previous state by checking the server logs. Watch for these specific indicators:
+
+* **`Resuming countdown: X minutes remaining`**: This confirms the plugin reloaded the timer from your last session instead of starting a full new interval.
+* **`Movement Guard: Resumed with Delta Xm`**: This confirms the vessel's accumulated travel distance was recovered, ensuring tracking continuity across the reboot.
+
+To stream these logs in real-time on your server, use:
+```bash
+journalctl -u signalk-server -f | grep "signalk-windy-apiv2"
+```
+
+### Common Status Messages
+The following messages appear in the Signal K Dashboard to provide a high-level view of the plugin's health:
+
+| Message | Meaning | Recommended Action |
+| :--- | :--- | :--- |
+| **`Waiting for GPS fix...`** | Plugin is active but has no valid position data. | Ensure your GPS source is connected and sending data. |
+| **`Movement Guard: Hold`** | Vessel has moved less than the threshold (default 300m). | No action needed; weather is sent but map location is held. |
+| **`Resuming countdown...`** | Waiting for the next interval after a server reboot. | Normal behavior; persistence logic is active. |
+| **`API Error: 401`** | Unauthorized access to Windy API. | Double-check your Station Password and API Key. |
+| **`API Error: 400`** | Malformed request. | Check for invalid characters in your Station ID or Password. |
+
+### Manual Reset
+If you need to clear the persistent state (for example, to reset the accumulated distance counter or force an immediate timer restart), follow these steps:
+
+1.  Open the Signal K **Dashboard**.
+2.  Navigate to **Server > Plugin Config**.
+3.  Select the **Windy API v2 Reporter** from the list.
+4.  Click the **Submit** button at the bottom of the configuration page.
+    * *Note: You do not need to change any settings; simply clicking "Submit" triggers the plugin to stop and restart, which clears the session cache and re-initializes all trackers.*
+    
+### Diagnostic Reporting
+If you are reporting a bug or need to analyze the plugin's performance over time, use the following command to generate a clean log summary. This command captures the last 100 entries related specifically to this plugin and removes extra formatting for better readability:
+
+```bash
+journalctl -u signalk-server -n 100 --no-pager | grep "signalk-windy-apiv2"
+```
+
+When sharing logs for troubleshooting, please ensure you have redacted your **Station Password** and **API Key** if they appear in any custom debug messages or configurations before posting them to public forums or GitHub issues.
+
+#### Key Log Events to Watch
+When monitoring the logs, these specific events confirm the plugin's internal logic is operating correctly:
+
+* **`Starting plugin`**: The Signal K server has successfully initialized the Windy API v2 Reporter.
+* **`Resuming countdown: X minutes remaining`**: (v1.0.1+) Persistence logic successfully recovered the timer state after a reboot.
+* **`Movement Guard: Hold`**: The vessel has not moved the minimum distance (default 300m) required to update the map pin.
+* **`Movement Guard: Resetting distance`**: The boat has moved beyond the threshold, and the distance counter has reset for the next cycle.
+* **`Sending weather data to Windy...`**: An API request has been triggered based on your configured interval.
+* **`API Response: 200`**: Windy has successfully received and processed your data.
+* **`API Error: 401`**: Unauthorized access. Check your **Station Password** and **API Key**.
+
 ## License
 Apache-2.0
