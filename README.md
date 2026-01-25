@@ -1,7 +1,17 @@
 # Signal K Windy API v2 Reporter
 ![Signal K Windy Icon](icon.svg)
 
-This plugin gathers environmental data (Wind, Gusts, Temperature, Pressure, and Humidity) from a Signal K server and reports it to Windy.com as a Personal Weather Station (PWS) using the **v2 API**.
+This plugin gathers environmental data from a Signal K server and reports it to Windy.com as a Personal Weather Station (PWS) using the **v2 API**.
+
+A Signal K plugin that reports weather and position data to the **Windy.com Stations API v2**. This plugin is designed specifically for moving vessels, utilizing separate endpoints for data (Wind, Gusts, Temperature, Pressure, and Humidity) and station metadata to ensure reliable map updates and minimal bandwidth usage.
+
+## Features
+
+- **API v2 Compliance**: Uses the latest Windy protocol with separate `GET` (observations) and `PUT` (station management) requests.
+- **Movement Guard**: Optimized GPS reporting that only updates your vessel's position on the Windy map after moving a configurable distance (default 300m).
+- **State Persistence**: Remembers your position and reporting schedule across Signal K server restarts.
+- **Enhanced Status Display**: Real-time feedback in the Signal K dashboard showing exactly which sensors are transmitting.
+- **Smart Unit Conversion**: Automatically handles conversion from Signal K base units (Kelvin, Pascal, m/s) to Windy standards (°C, hPa, m/s).
 
 ## 🚀 Quick Start Guide
 1. **Register the Station**: Log in to [stations.windy.com](https://stations.windy.com) and click **+ Add Station**.

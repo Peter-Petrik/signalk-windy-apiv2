@@ -2,6 +2,22 @@
 
 All notable changes to the Signal K Windy API v2 Reporter will be documented in this file.
 
+## [1.0.3] - 2026-01-25
+
+### Added
+* **API v2 Compliance**: Fully transitioned to the separate **GET** (observations) and **PUT** (station metadata) architecture required by the Windy Stations API v2.
+* **Enhanced Status Display**: Added a real-time sensor flag readout (e.g., `[W|G|D|T|P|H]`) to the plugin status, indicating which data types were successfully transmitted.
+* **Metadata Restoration**: Restored the `operator_url` field to allow public links to be displayed on station pages.
+* **Strict Descriptive Text**: Updated all schema descriptions to remove conversational language and improve technical clarity.
+
+### Changed
+* **Data Sharing Descriptions**: Updated `shareOption` text to precisely define the "Aggregator Open Data License" for public stations and internal usage for private ones.
+* **Endpoint Routing**: Replaced the legacy monolithic `POST` endpoint with the new v2-specific observation and management URLs.
+
+### Fixed
+* **Position Update Reliability**: Corrected an issue where boat positions would not update on the map due to API v1 legacy payloads being used in a v2 environment.
+* **Unit Conversion Validation**: Re-verified and locked mathematical conversions for Pressure (Pa to hPa), Temperature (K to °C), and Humidity (Ratio to %).
+
 ## [1.0.2] - 2026-01-25
 
 ### Added
