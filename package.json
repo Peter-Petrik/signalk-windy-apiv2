@@ -38,6 +38,8 @@
     "index.js",
     "package.json",
     "README.md",
-    "icon.svg"
+    "CHANGELOG.md",
+    "icon.svg",
+    "screenshots/*.png"
   ]
 }

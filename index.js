@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.1.0 - Update station_type parameter, add Station Name as operator_text, refactor Displacement Logic to radius-based, refined dashboard status
+ * v1.1.1 - Screenshots and README updates
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */

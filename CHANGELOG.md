@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.1] - 2026-01-26
 
 ### Added
-- **Screenshots**: Example of dashboard, configuration screen options, and Windy.com station display.
+- **Asset Bundling**: Updated `package.json` to include screenshots and icons in the npm package for better visibility in the Signal K App Store.
+- **Enhanced Documentation**: Expanded the README with a Project Purpose, Prerequisites, and a detailed Mapped Data Paths table including internal API keys.
 
 ## [1.1.0] - 2026-01-26
 
