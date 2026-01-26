@@ -147,5 +147,19 @@ journalctl -u signalk-server -n 100 --no-pager | grep "signalk-windy-apiv2"
 
 When sharing logs for troubleshooting, please redact the **Station Password** and **API Key** if they appear in any custom debug messages or configurations before posting them to public forums or GitHub issues.
 
+## Screenshots
+
+### Plugin Configuration
+![Credentials](screenshots/configuration-credentials.png)
+![Vessel](screenshots/configuration-vessel.png)
+![Transmission](screenshots/configuration-transmission.png)
+![Path Overrides](screenshots/configuration-path-overrides.png)
+
+### Live Dashboard Heartbeat
+![Dashboard Status](screenshots/dashboard-status.png)
+
+### Vessel on Windy Map
+![Windy Station View](screenshots/windy-station.png)
+
 ## License
 Copyright 2026 Peter Petrik. Licensed under the Apache-2.0 License.
