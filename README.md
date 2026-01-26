@@ -8,10 +8,9 @@ A Signal K plugin that reports weather and position data to the **Windy.com Stat
 ## Features
 
 - **API v2 Compliance**: Uses the latest Windy protocol with separate `GET` (observations) and `PUT` (station management) requests.
-- **Live Heartbeat Status**: (v1.0.8+) Real-time feedback in the Signal K dashboard showing a per-second countdown to the next transmission and accumulated movement distance.
-- **Movement Guard**: Optimized GPS reporting that only updates the vessel's position on the Windy map after moving a configurable distance (default 300m).
-- **State Persistence**: Remembers the position and reporting schedule across Signal K server restarts via `state.json`.
-- **Enhanced Status Display**: Real-time feedback in the Signal K dashboard showing exactly which sensors are transmitting.
+- **Live Heartbeat Status**: (v1.1.0+) Enhanced dashboard feedback showing last report data, current radius displacement (Delta), and a per-second countdown.
+- **Radius-Based Movement Guard**: (v1.1.0+) Intelligent GPS reporting that triggers map updates only when the vessel moves beyond a set radius from its last position, preventing "phantom movement" while at anchor.
+- **State Persistence**: Remembers the movement baseline and reporting schedule across Signal K server restarts via `state.json`.
 - **Smart Unit Conversion**: Automatically handles conversion from Signal K base units (Kelvin, Pascal, m/s) to Windy standards (°C, hPa, m/s).
 
 ## 🚀 Quick Start Guide

@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.0.9 - Update pressure parameter
+ * v1.1.0 - Update station_type parameter, add Station Name as operator_text, refactor Displacement Logic to radius-based, refined dashboard status
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -34,7 +34,7 @@ module.exports = function (app) {
 
   /**
    * Heartbeat: Updates the Signal K Dashboard status with a live countdown.
-   * Runs every 1 second to ensure the user sees active progress.
+   * Refined to show Last Report data, Current Displacement, and Countdown.
    */
   const updateHeartbeatStatus = (msgPrefix = 'Next report in') => {
     const remainingMs = nextRunTime - Date.now();
@@ -42,11 +42,14 @@ module.exports = function (app) {
       const min = Math.floor(remainingMs / 60000);
       const sec = Math.floor((remainingMs % 60000) / 1000);
       
-      // Combine last submitted data with the countdown heartbeat
+      // Build the components of the status string
       const heartbeat = `${msgPrefix}: ${min}m ${sec}s`;
+      const movement = `Delta: ${Math.round(currentDistance)}m`;
+      
+      // Combine last submitted data with the countdown and movement delta
       const status = lastReportString 
-        ? `${lastReportString} | Delta: ${Math.round(currentDistance)}m | ${heartbeat}`
-        : `${heartbeat} | Delta: ${Math.round(currentDistance)}m`;
+        ? `${lastReportString} | ${movement} | ${heartbeat}`
+        : `${heartbeat} | ${movement}`;
         
       app.setPluginStatus(status);
     }
@@ -89,7 +92,7 @@ module.exports = function (app) {
             default: 'Signal K Vessel',
             description: 'The name visible on the Windy map.'
           },
-          stationType: { 
+          station_type: { 
             type: 'string', 
             title: 'Station Type', 
             default: 'Boat (Signal K)',
@@ -109,8 +112,7 @@ module.exports = function (app) {
               'Public', 
               'Windy',
               'Private'
-            ],
-            description: 'Public: aggregate data under the Aggregator Open Data License\nWindy: Observations used only by Windy.com\nPrivate: Private non-public use'
+            ]
           },
           agl_temp: {
             type: 'integer', // Changed from 'number' to 'integer'
@@ -145,8 +147,7 @@ module.exports = function (app) {
           forceUpdate: { 
             type: 'boolean', 
             title: 'Force GPS Updates', 
-            default: false,
-            description: 'Bypasses the Movement Guard to send GPS coordinates at every interval.'
+            default: false
           }
         }
       },
@@ -169,6 +170,16 @@ module.exports = function (app) {
     credentials: { 
       stationPassword: { "ui:widget": "password" }, 
       apiKey: { "ui:widget": "password" } 
+    },
+    identity: {
+      shareOption: {
+       "ui:help": "Public: aggregate data under the Aggregator Open Data License; Windy: Observations used only by Windy.com; Private: Private non-public use"
+      }
+    },
+    logic: {
+      forceUpdate: {
+        "ui:help": "Bypasses the Movement Guard to send GPS coordinates at every interval."
+      }
     },
     pathMap: { "ui:options": { collapsible: true, collapsed: true } }
   };
@@ -264,7 +275,8 @@ module.exports = function (app) {
   // --- ENGINE ---
 
   /**
-   * Tracks distance traveled since the last successful map update using Cheap Ruler math.
+   * Tracks displacement from the last reported point using Cheap Ruler math.
+   * This is a radius calculation, not cumulative odometer distance.
    */
   function handlePositionUpdate(pos) {
     if (!lastSentPos.lat) {
@@ -274,9 +286,7 @@ module.exports = function (app) {
     }
     const dx = (pos.longitude - lastSentPos.lon) * kx;
     const dy = (pos.latitude - lastSentPos.lat);
-    currentDistance += Math.sqrt(dx * dx + dy * dy) * 111319; // Result in meters
-    lastSentPos = { lat: pos.latitude, lon: pos.longitude };
-    kx = Math.cos(pos.latitude * Math.PI / 180);
+    currentDistance = Math.sqrt(dx * dx + dy * dy) * 111319; // Current radius in meters
   }
 
   /**
@@ -332,7 +342,10 @@ module.exports = function (app) {
           // RESET PEAK after successful report
           peakGust = 0;
         })
-        .catch(err => app.error('Windy Observation Error:', err.message));
+        .catch(err => {
+          const msg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
+          app.error('Windy Observation Error:', msg);
+        });
     } else {
       app.setPluginStatus(`Waiting for sensor data | Delta: ${Math.round(currentDistance)}m`);
     }
@@ -350,19 +363,20 @@ module.exports = function (app) {
       const rawShare = (options.shareOption || '').toLowerCase();
 
       const metadataPayload = {
+        name: options.stationName,
+        share_option: rawShare,
         lat: Number(pos.value.latitude.toFixed(5)),
         lon: Number(pos.value.longitude.toFixed(5)),
-        name: options.stationName,
-        type: options.stationType,
-        share_option: rawShare,
-        operator_url: options.operator_url || '',
         elev_m: Math.round(altitude.value), // Round to nearest integer per API error
+        agl_wind: options.agl_wind || 10,    // Height from settings (AGL requirement)
         agl_temp: options.agl_temp || 2,    // Height from settings (AGL requirement)
-        agl_wind: options.agl_wind || 10    // Height from settings (AGL requirement)
+        station_type: options.station_type,
+        operator_text: options.stationName,
+        operator_url: options.operator_url || ''
       };
 
       // Log movement tracking status for PUT submission
-      app.debug(`Movement Guard: ${Math.round(currentDistance)} meters traveled`);
+      app.debug(`Movement Guard: ${Math.round(currentDistance)} meters displacement from last report`);
       // Log metadata payload to server log as requested
       app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(metadataPayload)}`);
 
@@ -373,7 +387,10 @@ module.exports = function (app) {
         }
       })
       .then(() => {
-        currentDistance = 0; // Reset movement guard after successful map update
+        // Reset movement guard baseline only after a successful map update
+        lastSentPos = { lat: pos.value.latitude, lon: pos.value.longitude };
+        kx = Math.cos(pos.value.latitude * Math.PI / 180);
+        currentDistance = 0;
         app.debug('Station metadata updated successfully');
       })
       .catch(err => {

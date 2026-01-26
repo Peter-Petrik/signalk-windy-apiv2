@@ -5,6 +5,23 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-01-26
+
+### Added
+- **Radius-Based Displacement Logic**: Refactored the Movement Guard to use a radius calculation (distance from the last reported point) instead of cumulative distance, preventing "anchor swing" from triggering unnecessary GPS updates.
+- **Station Identity Metadata**: Added `operator_text` to the metadata payload, mapping it to the Station Name for better visibility on Windy.
+- **UI Schema Integration**: Introduced a dedicated `uiSchema` to separate visual presentation (help text, widget types) from the data validation logic.
+- **Enhanced Observation Diagnostics**: Refined the `.catch` block for weather reports to log specific HTTP status codes and error responses from Windy, assisting in debugging "Windy Observation Errors".
+
+### Fixed
+- **Double Description UI Bug**: Resolved an issue where help text for "Force GPS Updates" and "Share Option" appeared twice in the Signal K settings.
+- **Layout Alignment**: Moved all descriptive legends into the `uiSchema` to ensure they render cleanly only under their respective fields.
+
+### Changed
+- **Metadata Key Update**: Updated the `station_type` parameter in the metadata `PUT` payload to ensure compatibility with the latest Windy API v2 requirements.
+- **Refined Dashboard Status**: Improved the live heartbeat display to show a combined view of the last successful sensor data, current displacement (Delta), and the reporting countdown.
+- **Share Option Formatting**: Updated the `shareOption` legend into a concatenated string to describe Public, Windy-only, and Private data policies in the user interface.
+
 ## [1.0.8] - 2026-01-26
 
 ### Added
