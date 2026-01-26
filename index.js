@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.0.7 - Metadata Diagnostics & Pressure Correction
+ * v1.0.8 - User-Friendly Status Display, API v2 Compliance, Heartbeat
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -11,10 +11,12 @@ const path = require('path');
 
 module.exports = function (app) {
   let timer = null;
+  let statusTimer = null; // Variable for the live countdown heartbeat
   let lastSentPos = { lat: 0, lon: 0 };
   let currentDistance = 0;
   let nextRunTime = 0;
   let kx = 1; // Latitude scaling factor for Equirectangular projection (Cheap Ruler)
+  let lastReportString = ''; // Persistent storage for the last submitted data string
 
   // Peak Gust Tracking Variables
   let peakGust = 0;
@@ -28,6 +30,26 @@ module.exports = function (app) {
   const getStateFilePath = () => {
     const dataDir = app.getDataDirPath();
     return path.join(dataDir, 'state.json');
+  };
+
+  /**
+   * Heartbeat: Updates the Signal K Dashboard status with a live countdown.
+   * Runs every 1 second to ensure the user sees active progress.
+   */
+  const updateHeartbeatStatus = (msgPrefix = 'Next report in') => {
+    const remainingMs = nextRunTime - Date.now();
+    if (remainingMs > 0) {
+      const min = Math.floor(remainingMs / 60000);
+      const sec = Math.floor((remainingMs % 60000) / 1000);
+      
+      // Combine last submitted data with the countdown heartbeat
+      const heartbeat = `${msgPrefix}: ${min}m ${sec}s`;
+      const status = lastReportString 
+        ? `${lastReportString} | Delta: ${Math.round(currentDistance)}m | ${heartbeat}`
+        : `${heartbeat} | Delta: ${Math.round(currentDistance)}m`;
+        
+      app.setPluginStatus(status);
+    }
   };
 
   plugin.schema = {
@@ -58,7 +80,7 @@ module.exports = function (app) {
         }
       },
       identity: {
-        title: 'Vessel Identity & Privacy',
+        title: 'Vessel Identity & Sensor Geometry',
         type: 'object',
         properties: {
           stationName: { 
@@ -82,12 +104,25 @@ module.exports = function (app) {
             type: 'string',
             title: 'Share Option',
             default: 'public',
-            enum: ['public', 'private'],
+            enum: ['public', 'only_windy', 'private'],
             enumNames: [
-              'Public (Open Data)', 
-              'Private (Only Windy)'
+              'Public', 
+              'Windy',
+              'Private'
             ],
-            description: 'Public: aggregate data under the Aggregator Open Data License; Private: Windy.com use only.'
+            description: 'Public: aggregate data under the Aggregator Open Data License\nWindy: Observations used only by Windy.com\nPrivate: Private non-public use'
+          },
+          agl_temp: {
+            type: 'integer', // Changed from 'number' to 'integer'
+            title: 'Temperature Sensor Height (m)',
+            default: 2,
+            description: 'Height of the thermometer above the water line (AGL). Must be a whole number.'
+          },
+          agl_wind: {
+            type: 'integer', // Changed from 'number' to 'integer'
+            title: 'Wind Sensor Height (m)',
+            default: 10,
+            description: 'Height of the anemometer above the water line (AGL). Must be a whole number.'
           }
         }
       },
@@ -187,19 +222,29 @@ module.exports = function (app) {
     const remainingTime = nextRunTime - Date.now();
     if (remainingTime <= 0) {
       // Warm-up delay: Give Signal K 15 seconds to receive sensor data before first report
-      app.setPluginStatus('Warming up (15s)...');
+      nextRunTime = Date.now() + 15000;
+      statusTimer = setInterval(() => updateHeartbeatStatus('Warming up'), 1000);
+      
       timer = setTimeout(() => {
+        clearInterval(statusTimer); // Stop warm-up countdown
         reportToWindy(options, !!options.forceUpdate);
         scheduleNext(options);
       }, 15000);
     } else {
-      app.setPluginStatus(`Resuming: ${Math.round(remainingTime / 60000)}m remaining`);
-      timer = setTimeout(() => { reportToWindy(options); scheduleNext(options); }, remainingTime);
+      // Resuming logic with Heartbeat integration
+      statusTimer = setInterval(() => updateHeartbeatStatus('Resuming'), 1000);
+      
+      timer = setTimeout(() => { 
+        clearInterval(statusTimer);
+        reportToWindy(options); 
+        scheduleNext(options); 
+      }, remainingTime);
     }
   };
 
   plugin.stop = function () {
     if (timer) clearTimeout(timer);
+    if (statusTimer) clearInterval(statusTimer); // Clear heartbeat on stop
     
     // Save movement state to private file (Does not touch config/settings.json)
     try {
@@ -266,14 +311,23 @@ module.exports = function (app) {
         .then(() => {
           const time = new Date().toLocaleTimeString([], { hour12: false });
           
-          // Define fixed flag order: Wind, Gust, Direction, Temp, Pressure, Humidity
-          const flagMap = { wind: 'W', gust: 'G', winddir: 'D', temp: 'T', baro: 'P', rh: 'H' };
-          const sensorFlags = Object.keys(flagMap)
-            .filter(key => weather.hasOwnProperty(key))
-            .map(key => `${flagMap[key]}:${weather[key]}`)
-            .join('|');
+          // User-Friendly status mapping for v1.0.8
+          // Converts m/s -> kn and Pa -> kPa for dashboard readability
+          const displayMap = [];
+          if (weather.wind) displayMap.push(`W:${(weather.wind * 1.94384).toFixed(1)}kn`);
+          if (weather.gust) displayMap.push(`G:${(weather.gust * 1.94384).toFixed(1)}kn`);
+          if (weather.winddir) displayMap.push(`D:${weather.winddir}°`);
+          if (weather.temp) displayMap.push(`T:${weather.temp}C`);
+          if (weather.baro) displayMap.push(`P:${(weather.baro / 1000).toFixed(2)}kPa`);
+          if (weather.rh) displayMap.push(`H:${weather.rh}%`);
 
-          app.setPluginStatus(`[${sensorFlags}] at ${time} | Delta: ${Math.round(currentDistance)}m`);
+          const sensorFlags = displayMap.join('|');
+          
+          // Store the successful report string to display during the countdown heartbeat
+          lastReportString = `[${sensorFlags}] at ${time}`;
+
+          // Status updated here after successful report
+          app.setPluginStatus(`${lastReportString} | Delta: ${Math.round(currentDistance)}m`);
 
           // RESET PEAK after successful report
           peakGust = 0;
@@ -286,17 +340,31 @@ module.exports = function (app) {
     // 2. METADATA: PUT /api/v2/pws/{id}
     // Auth uses Global API Key in headers (windy-api-key)
     if (pos && pos.value && shouldUpdateGPS) {
+      // API v2 Requirement: elev_m must be an integer
+      // Attempt to find altitude in common Signal K paths; default to 0
+      const altitude = app.getSelfPath('navigation.gnss.antennaAltitude') || 
+                       app.getSelfPath('navigation.altitude') || { value: 0 };
+
+      // Convert selection to lowercase as required by API v2.
+      // No default is applied here; if empty, Windy will return a 400 Bad Request error.
+      const rawShare = (options.shareOption || '').toLowerCase();
+
       const metadataPayload = {
         lat: Number(pos.value.latitude.toFixed(5)),
         lon: Number(pos.value.longitude.toFixed(5)),
         name: options.stationName,
         type: options.stationType,
-        share: options.shareOption === 'public' ? 'Open' : 'Private',
-        operator_url: options.operator_url || ''
+        share_option: rawShare,
+        operator_url: options.operator_url || '',
+        elev_m: Math.round(altitude.value), // Round to nearest integer per API error
+        agl_temp: options.agl_temp || 2,    // Height from settings (AGL requirement)
+        agl_wind: options.agl_wind || 10    // Height from settings (AGL requirement)
       };
 
       // Log movement tracking status for PUT submission
       app.debug(`Movement Guard: ${Math.round(currentDistance)} meters traveled`);
+      // Log metadata payload to server log as requested
+      app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(metadataPayload)}`);
 
       axios.put(`https://stations.windy.com/api/v2/pws/${options.stationId}`, metadataPayload, {
         headers: { 
@@ -320,7 +388,7 @@ module.exports = function (app) {
   /**
    * Fetches weather data from Signal K and converts values to Windy-standard units.
    * K -> °C, Ratio -> %
-   * Signal K provides Pa. Windy API v2 expects Pa.
+   * Signal K provides Pa. Windy API v2 expects Pa. (v1.0.8 Update)
    */
   function getStationData(options) {
     const pm = options.pathMap || {};
@@ -340,7 +408,7 @@ module.exports = function (app) {
     if (t && t.value !== null) d.temp = (t.value - 273.15).toFixed(1);
 
     const p = get(pm.pressure || 'environment.outside.pressure');
-    if (p && p.value !== null) d.baro = Math.round(p.value / 100);
+    if (p && p.value !== null) d.baro = Math.round(p.value);
 
     const h = get(pm.humidity || 'environment.outside.relativeHumidity');
     if (h && h.value !== null) d.rh = Math.round(h.value * 100);
@@ -354,7 +422,16 @@ module.exports = function (app) {
   function scheduleNext(options) {
     const interval = (options.interval || 5) * 60000;
     nextRunTime = Date.now() + interval;
-    timer = setTimeout(() => { reportToWindy(options); scheduleNext(options); }, interval);
+
+    // Start countdown heartbeat for the new interval
+    if (statusTimer) clearInterval(statusTimer);
+    statusTimer = setInterval(() => updateHeartbeatStatus(), 1000);
+
+    timer = setTimeout(() => { 
+      clearInterval(statusTimer); // Stop countdown before reporting
+      reportToWindy(options); 
+      scheduleNext(options); 
+    }, interval);
   }
 
   return plugin;

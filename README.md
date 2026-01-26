@@ -8,8 +8,9 @@ A Signal K plugin that reports weather and position data to the **Windy.com Stat
 ## Features
 
 - **API v2 Compliance**: Uses the latest Windy protocol with separate `GET` (observations) and `PUT` (station management) requests.
+- **Live Heartbeat Status**: (v1.0.8+) Real-time feedback in the Signal K dashboard showing a per-second countdown to the next transmission and accumulated movement distance.
 - **Movement Guard**: Optimized GPS reporting that only updates the vessel's position on the Windy map after moving a configurable distance (default 300m).
-- **State Persistence**: Remembers the position and reporting schedule across Signal K server restarts.
+- **State Persistence**: Remembers the position and reporting schedule across Signal K server restarts via `state.json`.
 - **Enhanced Status Display**: Real-time feedback in the Signal K dashboard showing exactly which sensors are transmitting.
 - **Smart Unit Conversion**: Automatically handles conversion from Signal K base units (Kelvin, Pascal, m/s) to Windy standards (°C, hPa, m/s).
 
@@ -29,21 +30,25 @@ A Signal K plugin that reports weather and position data to the **Windy.com Stat
 ## 📟 Enhanced Status Display
 The plugin provides a high-resolution status string in the Signal K dashboard to monitor transmissions.
 
-**Format:** `✅ Status: [Data Points] at [Time] [Movement Status] | Delta: [Distance]m`
+**Format:** `[Data Map] at [Time] | Delta: [Distance]m | Next report in: [Min]m [Sec]s`
 
 ### Data Point Legend:
-The status includes a "Data Map" showing which points were successfully bundled in the last request:
-* **W**: Wind
-* **G**: Gusts
-* **D**: Direction
-* **T**: Temp
-* **P**: Pressure
-* **H**: Humidity
+The last-submitted weather data remains visible on the dashboard while the heartbeat timer counts down to the next report.
+
+The status includes a "Data Map" showing which points were successfully bundled in the last request. For user convenience, dashboard values are converted to common units:
+* **W (Wind)**: Knots (kn)
+* **G (Gusts)**: Knots (kn)
+* **D (Direction)**: Degrees (°)
+* **T (Temp)**: Celsius (°C)
+* **P (Pressure)**: kiloPascals (kPa)
+* **H (Humidity)**: Percentage (%)
+
+**Note**: These conversions apply only to the dashboard status display for user convenience. The plugin continues to transmit raw data to Windy using the specific units required by the API v2 specification (e.g., raw Pascals for barometric pressure) to ensure maximum data integrity.
 
 ---
 
 ## ⚙️ Configuration Groups
-Settings are organized into four logical sections to maintain a streamlined user experience:
+Settings are organized into four logical sections:
 
 ### 1. Windy API Credentials
 * **Station ID**: Unique station identifier.
@@ -54,8 +59,10 @@ Settings are organized into four logical sections to maintain a streamlined user
 * **Station Name**: How the vessel station appears on the map.
 * **Station Type**: Default is `Boat (Signal K)`.
 * **Share Option**: 
-    * **Public (Open Data)**: Data is shared under the Windy Open Data License and may be aggregated by third parties.
-    * **Private (Only Windy)**: Observations are used only for display and visualization within the Windy platform.
+    * **Public**: Aggregate data under the Aggregator Open Data License.
+    * **Windy**: Observations used only by Windy.com.
+    * **Private**: Private non-public use.
+* **Sensor Heights**: Configurable AGL (Above Ground Level) heights for temperature and wind sensors, rounded to integers per API v2 requirements.
 
 ### 3. Transmission & GPS Logic
 * **Interval**: Reporting frequency in minutes (Default: `5`).
@@ -67,18 +74,17 @@ Settings are organized into four logical sections to maintain a streamlined user
 ---
 
 ## 💡 Pro Tips
-* **Movement Guard**: The **Delta** value tracks distance since the last map update. The location is only sent to the API when it exceeds **Minimum Movement** threshold.
-* **State Persistence**: On server restart, the plugin automatically reloads the last reported position and the remaining time on the reporting interval. This ensures the countdown resumes exactly where it left off and the Movement Guard maintains accurate travel distance tracking.
+* **Movement Guard**: The **Delta** value tracks distance since the last map update. The location is only sent to the API when it exceeds the **Minimum Movement** threshold.
+* **State Persistence**: On server restart, the plugin automatically reloads the last reported position and the remaining time on the reporting interval.
 * **GPS Fix**: The plugin will display `Waiting for GPS fix...` and pause transmissions if valid coordinates are unavailable.
 * **Native Units**: This plugin utilizes Signal K's native **m/s** for wind and gusts, passing them directly to Windy to ensure 1:1 data accuracy.
 * **Open Data**: Choosing `Public` contributes the station's weather data to the global meteorological community via Windy's aggregator.
 
 ---
 
-## 🛠️ Troubleshooting & State Management
+## 🛠️ Troubleshooting & Logs
 
-Starting with v1.0.4, the plugin manages its internal tracking data independently. To inspect or reset the internal movement state without touching the API credentials, the file is located at:
-
+Starting with v1.0.4, the plugin manages its internal tracking data independently. The file is located at:
 `~/.signalk/plugin-config-data/signalk-windy-apiv2/state.json`
 
 This file contains:
@@ -88,6 +94,22 @@ This file contains:
 
 If the plugin does not appear to be reporting data, or if verification of the new **State Persistence** logic after a restart is needed, the logs can be monitored directly from the server command line.
 
+### Key Log Events to Watch
+When monitoring the logs, these specific events confirm the plugin's internal logic is operating correctly:
+
+* **`Starting plugin`**: The Signal K server has successfully initialized the Windy API v2 Reporter.
+* **`Resuming: Xm Xs`**: Persistence logic successfully recovered the timer state after a reboot.
+* **`Windy Metadata Submission (PUT)`**: (v1.0.8+) Logged specifically when the vessel has moved past the threshold and is updating its position/identity on the Windy map.
+* **`Windy Submission (GET)`**: Confirms weather variables are being sent to the observation endpoint.
+
+| Log Message / Error | Meaning & Resolution |
+| :--- | :--- |
+| **`API Error: 400`** | **Invalid Data Format**: Windy's API v2 is strict about types. v1.0.8+ automatically rounds elevation and AGL heights to integers to fix this. |
+| **`API Error: 401`** | **Authentication Failed**: Your **Station Password** (for observations) or **Global API Key** (for metadata) is incorrect. |
+| **`API Error: 403`** | **Forbidden**: Station ID mismatch or the station hasn't been fully activated on Windy. |
+| **`Waiting for sensor data`** | **Sensor Issue**: Plugin is active but cannot find the required Signal K paths to form a report. |
+
+
 ### v1.0.7 Update: Enhanced Diagnostics & Precision
 The following improvements have been added to the troubleshooting and reporting logic:
 
@@ -96,33 +118,16 @@ The following improvements have been added to the troubleshooting and reporting 
 * **Protocol Compliance**: Metadata transmissions now explicitly include `application/json` headers to ensure 100% compatibility with the Windy API v2 specification.
 * **Distance Tracking Logs**: Ability to monitor the accumulated distance (Delta) in the server logs to see exactly how close the vessel is to triggering a map position update.
 
+### v1.0.8 Update: Heartbeat & Payload Transparency
+* **Live Countdown**: The dashboard now provides a second-by-second countdown until the next scheduled report.
+* **Metadata Debugging**: When debugging is enabled, the plugin now logs the exact JSON `PUT` payload sent to Windy, allowing you to verify fields like `share_option` and `elev_m`.
+* **Integer Validation**: Automatic rounding of elevation and sensor heights is now enforced for API v2 compliance to prevent "400 Bad Request" errors.
+
 ### Real-Time Log Monitoring
-To stream logs specifically for this plugin and see transmissions as they happen:
+To stream logs specifically for this plugin:
 ```bash
 journalctl -u signalk-server -f | grep "signalk-windy-apiv2"
 ```
-
-### Verifying State Persistence (v1.0.1+)
-After a Signal K server restart, ability to confirm that the plugin has successfully recovered its previous state by checking the server logs. Watch for these specific indicators:
-
-* **`Resuming countdown: X minutes remaining`**: This confirms the plugin reloaded the timer from the last session instead of starting a full new interval.
-* **`Movement Guard: Resumed with Delta Xm`**: This confirms the vessel's accumulated travel distance was recovered, ensuring tracking continuity across the reboot.
-
-To stream these logs in real-time on the Signal K server, use:
-```bash
-journalctl -u signalk-server -f | grep "signalk-windy-apiv2"
-```
-
-### Common Status Messages
-The following messages appear in the Signal K Dashboard to provide a high-level view of the plugin's health:
-
-| Message | Meaning | Recommended Action |
-| :--- | :--- | :--- |
-| **`Waiting for GPS fix...`** | Plugin is active but has no valid position data. | Ensure  GPS source is connected and sending data. |
-| **`Movement Guard: Hold`** | Vessel has moved less than the threshold (default 300m). | No action needed; weather is sent but map location is held. |
-| **`Resuming countdown...`** | Waiting for the next interval after a server reboot. | Normal behavior; persistence logic is active. |
-| **`API Error: 401`** | Unauthorized access to Windy API. | Double-check the Station Password and API Key. |
-| **`API Error: 400`** | Malformed request. | Check for invalid characters in the Station ID or Password. |
 
 ### Manual Reset
 To clear the persistent state (for example, to reset the accumulated distance counter or force an immediate timer restart), follow these steps:
@@ -141,17 +146,6 @@ journalctl -u signalk-server -n 100 --no-pager | grep "signalk-windy-apiv2"
 ```
 
 When sharing logs for troubleshooting, please redact the **Station Password** and **API Key** if they appear in any custom debug messages or configurations before posting them to public forums or GitHub issues.
-
-#### Key Log Events to Watch
-When monitoring the logs, these specific events confirm the plugin's internal logic is operating correctly:
-
-* **`Starting plugin`**: The Signal K server has successfully initialized the Windy API v2 Reporter.
-* **`Resuming countdown: X minutes remaining`**: (v1.0.1+) Persistence logic successfully recovered the timer state after a reboot.
-* **`Movement Guard: Hold`**: The vessel has not moved the minimum distance (default 300m) required to update the map pin.
-* **`Movement Guard: Resetting distance`**: The boat has moved beyond the threshold, and the distance counter has reset for the next cycle.
-* **`Sending weather data to Windy...`**: An API request has been triggered based on the configured interval.
-* **`API Response: 200`**: Windy has successfully received and processed the data.
-* **`API Error: 401`**: Unauthorized access. Check the **Station Password** and **API Key**.
 
 ## License
 Copyright 2026 Peter Petrik. Licensed under the Apache-2.0 License.

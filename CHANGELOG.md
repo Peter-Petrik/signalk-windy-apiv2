@@ -2,6 +2,26 @@
 
 All notable changes to the Signal K Windy API v2 Reporter will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.8] - 2026-01-26
+
+### Added
+- **Live Heartbeat Countdown**: Added a 1-second interval status timer that displays a live "Next report in" countdown and accumulated distance directly on the Signal K dashboard.
+- **Persistent Dashboard Telemetry**: Updated the status display to maintain the last-submitted weather data string visible throughout the countdown cycle.
+- **PUT Payload Logging**: Added an `app.debug` message to output the full JSON metadata payload into the server log immediately before transmission for easier verification.
+
+### Changed
+- **API v2 Privacy Key**: Updated the metadata `PUT` payload to use the `share_option` key for privacy settings as required by the Windy API v2 validator.
+- **Strict Data Formatting**: Enforced integer rounding for elevation (`elev_m`) and sensor heights (`agl_temp`, `agl_wind`) to prevent API rejection.
+- **Unit Precision**: Standardized weather observation values to one decimal place (`toFixed(1)`) for better data consistency.
+- **Dynamic Peak Gust Selection**: Improved logic to prioritize the tracked 1Hz peak gust over the Signal K path if the tracked value is higher.
+
+### Fixed
+- **Status Reporting Persistence**: Refined the heartbeat logic to ensure the countdown accurately reflects the `nextRunTime` persisted in the `state.json` file after a server restart.
+- **Directory Initialization**: Added recursive directory creation for the state file to prevent crashes on fresh installations.
+
 ## [1.0.7] - 2026-01-26
 
 ### Added
