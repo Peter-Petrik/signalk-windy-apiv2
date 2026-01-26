@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.0.5 - Lifecycle Compatibility Fix
+ * v1.0.6 - Peak Gust Tracking (Gap Closer)
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -15,6 +15,9 @@ module.exports = function (app) {
   let currentDistance = 0;
   let nextRunTime = 0;
   let kx = 1; // Latitude scaling factor for Equirectangular projection (Cheap Ruler)
+
+  // Peak Gust Tracking Variables
+  let peakGust = 0;
 
   const plugin = {};
   plugin.id = 'signalk-windy-apiv2';
@@ -73,7 +76,7 @@ module.exports = function (app) {
           operator_url: { 
             type: 'string', 
             title: 'Operator Website URL',
-            description: 'A public link displayed on your Windy station page (e.g., your blog or tracking page).'
+            description: 'A public link displayed on the Windy station page.'
           },
           shareOption: {
             type: 'string',
@@ -81,8 +84,8 @@ module.exports = function (app) {
             default: 'public',
             enum: ['public', 'private'],
             enumNames: [
-              'Public (Open Data - Visible on Map)', 
-              'Private (Only Windy - Visualized Only)'
+              'Public (Open Data)', 
+              'Private (Only Windy)'
             ],
             description: 'Public: aggregate data under the Aggregator Open Data License; Private: Windy.com use only.'
           }
@@ -120,7 +123,7 @@ module.exports = function (app) {
           windGust: { type: 'string', title: 'Wind Gust', default: 'environment.wind.gust' },
           windDir: { type: 'string', title: 'Wind Direction', default: 'environment.wind.directionTrue' },
           temp: { type: 'string', title: 'Outside Temp', default: 'environment.outside.temperature' },
-          pressure: { type: 'string', title: 'Barometer', default: 'environment.outside.pressure' },
+          pressure: { type: 'string', title: 'Barometric Pressure', default: 'environment.outside.pressure' },
           humidity: { type: 'string', title: 'Relative Humidity', default: 'environment.outside.relativeHumidity' }
         }
       }
@@ -146,7 +149,7 @@ module.exports = function (app) {
     };
 
     // Load internal movement state from private file
-    // app.getDataDirPath() is now safe to call inside start()
+    // app.getDataDirPath() is safe to call inside start()
     try {
       const stateFile = getStateFilePath();
       if (fs.existsSync(stateFile)) {
@@ -158,25 +161,41 @@ module.exports = function (app) {
       }
     } catch (e) { app.debug('Starting with fresh internal state.'); }
 
+    // --- PEAK GUST TRACKING (GAP CLOSER) ---
+    // Subscribe to navigation.position to track vessel movement for the Movement Guard
+    // Also subscribe to wind speed at 1Hz to track the highest wind speed observed between intervals
+    const windPath = options.pathMap.windSpeed || 'environment.wind.speedOverGround';
+
+    app.subscriptionmanager.subscribe({
+      context: 'vessels.self',
+      subscribe: [
+        { path: 'navigation.position', period: 1000 },
+        { path: windPath, period: 1000 }
+      ]
+    }, [], (err) => app.error(err), (delta) => {
+      delta.updates.forEach(u => u.values.forEach(v => {
+        if (v.path === 'navigation.position' && v.value) handlePositionUpdate(v.value);
+
+        // Track Peak Gust
+        if (v.path === windPath && v.value !== null) {
+          if (v.value > peakGust) peakGust = v.value;
+        }
+      }));
+    });
+
     // Determine if the plugin should report immediately or wait based on persisted nextRunTime
     const remainingTime = nextRunTime - Date.now();
     if (remainingTime <= 0) {
-      reportToWindy(options, !!options.forceUpdate);
-      scheduleNext(options);
+      // Warm-up delay: Give Signal K 15 seconds to receive sensor data before first report
+      app.setPluginStatus('Warming up (15s)...');
+      timer = setTimeout(() => {
+        reportToWindy(options, !!options.forceUpdate);
+        scheduleNext(options);
+      }, 15000);
     } else {
       app.setPluginStatus(`Resuming: ${Math.round(remainingTime / 60000)}m remaining`);
       timer = setTimeout(() => { reportToWindy(options); scheduleNext(options); }, remainingTime);
     }
-
-    // Subscribe to navigation.position to track vessel movement for the Movement Guard
-    app.subscriptionmanager.subscribe({
-      context: 'vessels.self',
-      subscribe: [{ path: 'navigation.position', period: 1000 }]
-    }, [], (err) => app.error(err), (delta) => {
-      delta.updates.forEach(u => u.values.forEach(v => {
-        if (v.path === 'navigation.position' && v.value) handlePositionUpdate(v.value);
-      }));
-    });
   };
 
   plugin.stop = function () {
@@ -224,26 +243,45 @@ module.exports = function (app) {
     const pos = app.getSelfPath('navigation.position');
     const shouldUpdateGPS = force || currentDistance >= (options.minMove || 300);
 
-    // 1. OBSERVATIONS: GET /api/v2/observation/update
-    // Auth uses Station Password as a query parameter (PASSWORD)
-    const weatherParams = new URLSearchParams({
-      id: options.stationId,
-      PASSWORD: options.stationPassword,
-      time: 'now',
-      ...weather
-    }).toString();
+    // GAP CLOSER: If no native gust is available, or if tracked peak is higher, use peakGust
+    if (peakGust > (weather.gust || 0)) {
+      weather.gust = peakGust.toFixed(1);
+    }
 
-    axios.get(`https://stations.windy.com/api/v2/observation/update?${weatherParams}`)
-      .then(() => {
-        const time = new Date().toLocaleTimeString([], { hour12: false });
-        // Enhanced Status Display: W=Wind, G=Gust, D=Direction, T=Temp, P=Pressure, H=Humidity
-        const sensorFlags = Object.keys(weather).map(k => {
-          const map = { wind: 'W', gust: 'G', winddir: 'D', temp: 'T', baro: 'P', rh: 'H' };
-          return map[k] || k[0].toUpperCase();
-        }).join('|');
-        app.setPluginStatus(`[${sensorFlags}] at ${time} | Delta: ${Math.round(currentDistance)}m`);
-      })
-      .catch(err => app.error('Windy Observation Error:', err.message));
+    // Check if we have any weather data to send
+    if (Object.keys(weather).length > 0) {
+      // 1. OBSERVATIONS: GET /api/v2/observation/update
+      // Auth uses Station Password as a query parameter (PASSWORD)
+      const weatherParams = new URLSearchParams({
+        id: options.stationId,
+        PASSWORD: options.stationPassword,
+        time: 'now',
+        ...weather
+      }).toString();
+
+      // Log variables and values submitted via GET
+      app.debug(`Windy Submission (GET): ${JSON.stringify(weather)}`);
+
+      axios.get(`https://stations.windy.com/api/v2/observation/update?${weatherParams}`)
+        .then(() => {
+          const time = new Date().toLocaleTimeString([], { hour12: false });
+          
+          // Define fixed flag order: Wind, Gust, Direction, Temp, Pressure, Humidity
+          const flagMap = { wind: 'W', gust: 'G', winddir: 'D', temp: 'T', baro: 'P', rh: 'H' };
+          const sensorFlags = Object.keys(flagMap)
+            .filter(key => weather.hasOwnProperty(key))
+            .map(key => `${flagMap[key]}:${weather[key]}`)
+            .join('|');
+
+          app.setPluginStatus(`[${sensorFlags}] at ${time} | Delta: ${Math.round(currentDistance)}m`);
+
+          // RESET PEAK after successful report
+          peakGust = 0;
+        })
+        .catch(err => app.error('Windy Observation Error:', err.message));
+    } else {
+      app.setPluginStatus(`Waiting for sensor data | Delta: ${Math.round(currentDistance)}m`);
+    }
 
     // 2. METADATA: PUT /api/v2/pws/{id}
     // Auth uses Global API Key in headers (windy-api-key)
@@ -256,6 +294,9 @@ module.exports = function (app) {
         share: options.shareOption === 'public' ? 'Open' : 'Private',
         operator_url: options.operator_url || ''
       };
+
+      // Log movement tracking status for PUT submission
+      app.debug(`Movement Guard: ${Math.round(currentDistance)} meters traveled`);
 
       axios.put(`https://stations.windy.com/api/v2/pws/${options.stationId}`, metadataPayload, {
         headers: { 'windy-api-key': options.apiKey }

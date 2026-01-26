@@ -2,6 +2,23 @@
 
 All notable changes to the Signal K Windy API v2 Reporter will be documented in this file.
 
+## [1.0.6] - 2026-01-26
+
+### Added
+- **Persistent State Management**: Implemented an independent `state.json` file in the Signal K data directory. This ensures that movement tracking (`currentDistance`), the reporting timer (`nextRunTime`), and the last known position are preserved across server restarts.
+- **"Gap Closer" Peak Gust Tracking**: Added a 1Hz background subscription to wind speed. The plugin now captures and reports the highest wind speed observed between reporting intervals, ensuring short-lived gusts are not missed.
+- **Startup "Warm-up" Delay**: Introduced a 15-second delay upon plugin start. This allows the Signal K data tree to fully populate from NMEA/Seatalk sensors before the first report is attempted, preventing empty data transmissions.
+- **Diagnostic Logging**: Migrated critical submission logs to `console.log` to ensure visibility in the main Signal K Server Log without requiring specific debug keys to be enabled.
+
+### Changed
+- **Status Reporting**: Updated the dashboard status logic to show "Warming up (15s)..." on restart and "Waiting for sensor data" if the Signal K tree is empty, rather than showing empty brackets `[]`.
+- **Movement Guard Precision**: Refined distance calculations using Equirectangular projection (Cheap Ruler) with a latitude scaling factor (`kx`) for better accuracy across different geographical regions.
+- **Unit Conversions**: Hardened the conversion logic for Kelvin to Celsius and Pascal to hPa to handle null or invalid sensor paths gracefully.
+
+### Fixed
+- Fixed an issue where the plugin would report empty brackets `[]` immediately following a Signal K restart.
+- Fixed a race condition where the reporting timer would reset to the full interval on every restart regardless of previous state.
+
 ## [1.0.5] - 2026-01-26
 
 ### Fixed

@@ -33,10 +33,10 @@ The plugin provides a high-resolution status string in the Signal K dashboard to
 
 ### Data Point Legend:
 The status includes a "Data Map" showing which points were successfully bundled in the last request:
-* **T**: Temp
 * **W**: Wind
 * **G**: Gusts
 * **D**: Direction
+* **T**: Temp
 * **P**: Pressure
 * **H**: Humidity
 
