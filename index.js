@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.0.8 - User-Friendly Status Display, API v2 Compliance, Heartbeat
+ * v1.0.9 - Update pressure parameter
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -80,7 +80,7 @@ module.exports = function (app) {
         }
       },
       identity: {
-        title: 'Vessel Identity & Sensor Geometry',
+        title: 'Vessel Identity & Sensors',
         type: 'object',
         properties: {
           stationName: { 
@@ -318,7 +318,7 @@ module.exports = function (app) {
           if (weather.gust) displayMap.push(`G:${(weather.gust * 1.94384).toFixed(1)}kn`);
           if (weather.winddir) displayMap.push(`D:${weather.winddir}°`);
           if (weather.temp) displayMap.push(`T:${weather.temp}C`);
-          if (weather.baro) displayMap.push(`P:${(weather.baro / 1000).toFixed(2)}kPa`);
+          if (weather.pressure) displayMap.push(`P:${(weather.pressure / 1000).toFixed(2)}kPa`);
           if (weather.rh) displayMap.push(`H:${weather.rh}%`);
 
           const sensorFlags = displayMap.join('|');
@@ -408,7 +408,7 @@ module.exports = function (app) {
     if (t && t.value !== null) d.temp = (t.value - 273.15).toFixed(1);
 
     const p = get(pm.pressure || 'environment.outside.pressure');
-    if (p && p.value !== null) d.baro = Math.round(p.value);
+    if (p && p.value !== null) d.pressure = Math.round(p.value);
 
     const h = get(pm.humidity || 'environment.outside.relativeHumidity');
     if (h && h.value !== null) d.rh = Math.round(h.value * 100);

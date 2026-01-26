@@ -74,6 +74,7 @@ Settings are organized into four logical sections:
 ---
 
 ## 💡 Pro Tips
+* **Data Stabilization (Warm-up)**: To ensure only valid, non-null data is transmitted, the plugin performs a 15-second warm-up upon startup. During this time, the dashboard will display `Warming up: [countdown]`. This allows the Signal K server to aggregate initial sensor readings from the network before the first API submission.
 * **Movement Guard**: The **Delta** value tracks distance since the last map update. The location is only sent to the API when it exceeds the **Minimum Movement** threshold.
 * **State Persistence**: On server restart, the plugin automatically reloads the last reported position and the remaining time on the reporting interval.
 * **GPS Fix**: The plugin will display `Waiting for GPS fix...` and pause transmissions if valid coordinates are unavailable.
@@ -98,14 +99,14 @@ If the plugin does not appear to be reporting data, or if verification of the ne
 When monitoring the logs, these specific events confirm the plugin's internal logic is operating correctly:
 
 * **`Starting plugin`**: The Signal K server has successfully initialized the Windy API v2 Reporter.
-* **`Resuming: Xm Xs`**: Persistence logic successfully recovered the timer state after a reboot.
+* **`Resuming: Xm Xs`**: Persistence logic successfully recovered the timer state after a reboot. Shown in Signal K Dashboard status.
 * **`Windy Metadata Submission (PUT)`**: (v1.0.8+) Logged specifically when the vessel has moved past the threshold and is updating its position/identity on the Windy map.
 * **`Windy Submission (GET)`**: Confirms weather variables are being sent to the observation endpoint.
 
 | Log Message / Error | Meaning & Resolution |
 | :--- | :--- |
 | **`API Error: 400`** | **Invalid Data Format**: Windy's API v2 is strict about types. v1.0.8+ automatically rounds elevation and AGL heights to integers to fix this. |
-| **`API Error: 401`** | **Authentication Failed**: Your **Station Password** (for observations) or **Global API Key** (for metadata) is incorrect. |
+| **`API Error: 401`** | **Authentication Failed**: The **Station Password** (for observations) or **Global API Key** (for metadata) is incorrect. |
 | **`API Error: 403`** | **Forbidden**: Station ID mismatch or the station hasn't been fully activated on Windy. |
 | **`Waiting for sensor data`** | **Sensor Issue**: Plugin is active but cannot find the required Signal K paths to form a report. |
 
@@ -120,7 +121,7 @@ The following improvements have been added to the troubleshooting and reporting 
 
 ### v1.0.8 Update: Heartbeat & Payload Transparency
 * **Live Countdown**: The dashboard now provides a second-by-second countdown until the next scheduled report.
-* **Metadata Debugging**: When debugging is enabled, the plugin now logs the exact JSON `PUT` payload sent to Windy, allowing you to verify fields like `share_option` and `elev_m`.
+* **Metadata Debugging**: When debugging is enabled, the plugin now logs the exact JSON `PUT` payload sent to Windy, allowing to verify fields like `share_option` and `elev_m`.
 * **Integer Validation**: Automatic rounding of elevation and sensor heights is now enforced for API v2 compliance to prevent "400 Bad Request" errors.
 
 ### Real-Time Log Monitoring
