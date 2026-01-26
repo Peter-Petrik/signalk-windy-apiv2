@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.0.6 - Peak Gust Tracking (Gap Closer)
+ * v1.0.7 - Metadata Diagnostics & Pressure Correction
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -287,8 +287,8 @@ module.exports = function (app) {
     // Auth uses Global API Key in headers (windy-api-key)
     if (pos && pos.value && shouldUpdateGPS) {
       const metadataPayload = {
-        lat: pos.value.latitude,
-        lon: pos.value.longitude,
+        lat: Number(pos.value.latitude.toFixed(5)),
+        lon: Number(pos.value.longitude.toFixed(5)),
         name: options.stationName,
         type: options.stationType,
         share: options.shareOption === 'public' ? 'Open' : 'Private',
@@ -299,19 +299,28 @@ module.exports = function (app) {
       app.debug(`Movement Guard: ${Math.round(currentDistance)} meters traveled`);
 
       axios.put(`https://stations.windy.com/api/v2/pws/${options.stationId}`, metadataPayload, {
-        headers: { 'windy-api-key': options.apiKey }
+        headers: { 
+          'windy-api-key': options.apiKey,
+          'Content-Type': 'application/json'
+        }
       })
       .then(() => {
         currentDistance = 0; // Reset movement guard after successful map update
         app.debug('Station metadata updated successfully');
       })
-      .catch(err => app.error('Windy Metadata Error:', err.message));
+      .catch(err => {
+        // Log detailed error from Windy for PUT submission (Enhanced v1.0.7 Diagnostics)
+        const detail = err.response ? JSON.stringify(err.response.data) : err.message;
+        const status = err.response ? err.response.status : 'N/A';
+        app.error(`Windy Metadata Error (${status}): ${detail}`);
+      });
     }
   }
 
   /**
    * Fetches weather data from Signal K and converts values to Windy-standard units.
-   * Pa -> hPa, K -> °C, Ratio -> %
+   * K -> °C, Ratio -> %
+   * Signal K provides Pa. Windy API v2 expects Pa.
    */
   function getStationData(options) {
     const pm = options.pathMap || {};

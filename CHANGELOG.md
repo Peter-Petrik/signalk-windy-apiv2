@@ -2,6 +2,21 @@
 
 All notable changes to the Signal K Windy API v2 Reporter will be documented in this file.
 
+## [1.0.7] - 2026-01-26
+
+### Added
+- **Detailed PUT Diagnostics**: Improved error handling for station metadata updates. The plugin now logs the specific HTTP status code and the full JSON error response from Windy's API.
+- **Explicit API Headers**: Added `Content-Type: application/json` to the metadata `PUT` request to ensure strict compliance with Windy API v2 requirements.
+- **Movement Guard Debugging**: Added debug logging to track accumulated distance (in meters) since the last successful map update.
+
+### Changed
+- **GPS Coordinate Precision**: Latitude and longitude are now rounded to exactly **5 decimal places** before transmission.
+- **Type Safety**: Coordinates are explicitly cast to numeric types (`Number`) to prevent API rejection caused by string formatting.
+
+### Fixed
+- **Metadata Update Failures**: Resolved issues where metadata updates were ignored or rejected due to missing JSON headers or excessive coordinate precision.
+- **Neutral tone in README.md**: Reviewed text for proper grammar.
+
 ## [1.0.6] - 2026-01-26
 
 ### Added
