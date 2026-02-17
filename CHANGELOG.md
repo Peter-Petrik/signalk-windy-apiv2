@@ -5,6 +5,19 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-17
+
+### Fixed
+- **Station Offline When Underway ([#4](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/4))**: Restructured the reporting cycle to send the station metadata PUT before the observation GET. Previously, the observation could land against the old station position when the vessel was moving, causing Windy to mark the station as offline immediately after a location update. The PUT now completes before the observation is sent, ensuring Windy receives weather data at the newly registered position. Credit to @jaredko2 for the detailed bug report and diagnosis, and @LeaseOnLife for confirming that PUTs do not count against Windy's observation rate limit.
+
+### Changed
+- **Explicit Timestamp Parameter**: Switched from `time: 'now'` to `ts` with a Unix epoch value in observation submissions. The `ts` parameter is the confirmed and documented Windy API v2 parameter, verified via live testing. This change also enables future offline queue support where queued observations require real timestamps.
+- **Dashboard Error Indicators**: Error states (failed PUT or GET) now use `app.setPluginError()` in addition to `app.error()`, causing the Signal K dashboard to display a red indicator when something is wrong instead of remaining green.
+- **Minimum Reporting Interval**: The interval configuration now enforces a 5-minute minimum via JSON Schema validation, matching Windy's rate limit of one observation per 5 minutes per station.
+- **Request Timeouts**: Both PUT and GET requests to Windy now have a 30-second timeout, preventing hanging requests on slow satellite connections from delaying subsequent reporting cycles.
+- **Async Reporting Engine**: The `reportToWindy` function is now `async/await` based, replacing fire-and-forget promise chains with sequential execution. This ensures correct ordering of the PUT and GET within each reporting cycle.
+- **Terminology Corrections**: Replaced "displacement" with "distance from baseline" in comments and debug log messages to avoid confusion with the marine term for hull displacement.
+
 ## [1.1.1] - 2026-01-26
 
 ### Added
@@ -103,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 * **Position Update Reliability**: Corrected an issue where boat positions would not update on the map due to API v1 legacy payloads being used in a v2 environment.
-* **Unit Conversion Validation**: Re-verified and locked mathematical conversions for Pressure (Pa to hPa), Temperature (K to °C), and Humidity (Ratio to %).
+* **Unit Conversion Validation**: Re-verified and locked mathematical conversions for Pressure (Pa to hPa), Temperature (K to Â°C), and Humidity (Ratio to %).
 
 ## [1.0.2] - 2026-01-25
 
@@ -168,6 +181,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.1.1...v1.2.0
+[1.1.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.8...v1.1.0
+[1.0.8]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.7...v1.0.8
+[1.0.7]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.6...v1.0.7
+[1.0.6]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.5...v1.0.6
+[1.0.5]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.4...v1.0.5
+[1.0.4]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v0.1.0...v1.0.0

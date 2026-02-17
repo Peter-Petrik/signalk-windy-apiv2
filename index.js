@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.1.1 - Screenshots and README updates
+ * v1.2.0 - Fix station offline when underway (Issue #4)
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -34,7 +34,7 @@ module.exports = function (app) {
 
   /**
    * Heartbeat: Updates the Signal K Dashboard status with a live countdown.
-   * Refined to show Last Report data, Current Displacement, and Countdown.
+   * Refined to show Last Report data, distance from baseline (Delta), and Countdown.
    */
   const updateHeartbeatStatus = (msgPrefix = 'Next report in') => {
     const remainingMs = nextRunTime - Date.now();
@@ -136,7 +136,8 @@ module.exports = function (app) {
             type: 'number', 
             title: 'Reporting Interval (Minutes)', 
             default: 5,
-            description: 'Frequency of data transmissions.'
+            minimum: 5,
+            description: 'Minimum 5 minutes. Windy enforces a rate limit of one observation per 5 minutes per station.'
           },
           minMove: { 
             type: 'number', 
@@ -275,7 +276,7 @@ module.exports = function (app) {
   // --- ENGINE ---
 
   /**
-   * Tracks displacement from the last reported point using Cheap Ruler math.
+   * Tracks distance from the last reported (baseline) position using Cheap Ruler math.
    * This is a radius calculation, not cumulative odometer distance.
    */
   function handlePositionUpdate(pos) {
@@ -291,9 +292,13 @@ module.exports = function (app) {
 
   /**
    * Reports data using separate endpoints as required by API v2.
-   * Observations use GET while Metadata (Location/Identity) use PUT.
+   * When the distance threshold is exceeded (vessel underway), the station location
+   * is updated via PUT first, then the observation is sent via GET immediately after.
+   * This ensures Windy receives observation data at the newly registered position,
+   * preventing the station from being marked offline after a location update.
+   * PUTs do not count against Windy's observation rate limit (confirmed via testing).
    */
-  function reportToWindy(options, force = false) {
+  async function reportToWindy(options, force = false) {
     const weather = getStationData(options);
     const pos = app.getSelfPath('navigation.position');
     const shouldUpdateGPS = force || currentDistance >= (options.minMove || 300);
@@ -303,55 +308,9 @@ module.exports = function (app) {
       weather.gust = peakGust.toFixed(1);
     }
 
-    // Check if we have any weather data to send
-    if (Object.keys(weather).length > 0) {
-      // 1. OBSERVATIONS: GET /api/v2/observation/update
-      // Auth uses Station Password as a query parameter (PASSWORD)
-      const weatherParams = new URLSearchParams({
-        id: options.stationId,
-        PASSWORD: options.stationPassword,
-        time: 'now',
-        ...weather
-      }).toString();
-
-      // Log variables and values submitted via GET
-      app.debug(`Windy Submission (GET): ${JSON.stringify(weather)}`);
-
-      axios.get(`https://stations.windy.com/api/v2/observation/update?${weatherParams}`)
-        .then(() => {
-          const time = new Date().toLocaleTimeString([], { hour12: false });
-          
-          // User-Friendly status mapping for v1.0.8
-          // Converts m/s -> kn and Pa -> kPa for dashboard readability
-          const displayMap = [];
-          if (weather.wind) displayMap.push(`W:${(weather.wind * 1.94384).toFixed(1)}kn`);
-          if (weather.gust) displayMap.push(`G:${(weather.gust * 1.94384).toFixed(1)}kn`);
-          if (weather.winddir) displayMap.push(`D:${weather.winddir}°`);
-          if (weather.temp) displayMap.push(`T:${weather.temp}C`);
-          if (weather.pressure) displayMap.push(`P:${(weather.pressure / 1000).toFixed(2)}kPa`);
-          if (weather.rh) displayMap.push(`H:${weather.rh}%`);
-
-          const sensorFlags = displayMap.join('|');
-          
-          // Store the successful report string to display during the countdown heartbeat
-          lastReportString = `[${sensorFlags}] at ${time}`;
-
-          // Status updated here after successful report
-          app.setPluginStatus(`${lastReportString} | Delta: ${Math.round(currentDistance)}m`);
-
-          // RESET PEAK after successful report
-          peakGust = 0;
-        })
-        .catch(err => {
-          const msg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
-          app.error('Windy Observation Error:', msg);
-        });
-    } else {
-      app.setPluginStatus(`Waiting for sensor data | Delta: ${Math.round(currentDistance)}m`);
-    }
-
-    // 2. METADATA: PUT /api/v2/pws/{id}
-    // Auth uses Global API Key in headers (windy-api-key)
+    // --- STEP 1: METADATA PUT (if distance threshold exceeded) ---
+    // Must complete before the observation GET so Windy has the correct station
+    // position when the observation arrives. Auth uses Global API Key in headers.
     if (pos && pos.value && shouldUpdateGPS) {
       // API v2 Requirement: elev_m must be an integer
       // Attempt to find altitude in common Signal K paths; default to 0
@@ -369,42 +328,84 @@ module.exports = function (app) {
         lon: Number(pos.value.longitude.toFixed(5)),
         elev_m: Math.round(altitude.value), // Round to nearest integer per API error
         agl_wind: options.agl_wind || 10,    // Height from settings (AGL requirement)
-        agl_temp: options.agl_temp || 2,    // Height from settings (AGL requirement)
+        agl_temp: options.agl_temp || 2,     // Height from settings (AGL requirement)
         station_type: options.station_type,
         operator_text: options.stationName,
         operator_url: options.operator_url || ''
       };
 
-      // Log movement tracking status for PUT submission
-      app.debug(`Movement Guard: ${Math.round(currentDistance)} meters displacement from last report`);
-      // Log metadata payload to server log as requested
+      app.debug(`Movement Guard: ${Math.round(currentDistance)}m from baseline position`);
       app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(metadataPayload)}`);
 
-      axios.put(`https://stations.windy.com/api/v2/pws/${options.stationId}`, metadataPayload, {
-        headers: { 
-          'windy-api-key': options.apiKey,
-          'Content-Type': 'application/json'
-        }
-      })
-      .then(() => {
+      try {
+        await axios.put(`https://stations.windy.com/api/v2/pws/${options.stationId}`, metadataPayload, {
+          headers: { 
+            'windy-api-key': options.apiKey,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        });
         // Reset movement guard baseline only after a successful map update
         lastSentPos = { lat: pos.value.latitude, lon: pos.value.longitude };
         kx = Math.cos(pos.value.latitude * Math.PI / 180);
         currentDistance = 0;
         app.debug('Station metadata updated successfully');
-      })
-      .catch(err => {
-        // Log detailed error from Windy for PUT submission (Enhanced v1.0.7 Diagnostics)
+      } catch (err) {
         const detail = err.response ? JSON.stringify(err.response.data) : err.message;
         const status = err.response ? err.response.status : 'N/A';
         app.error(`Windy Metadata Error (${status}): ${detail}`);
-      });
+        app.setPluginError(`Metadata update failed (${status})`);
+        // Continue to observation — weather data is still valuable even if location update failed
+      }
+    }
+
+    // --- STEP 2: OBSERVATION GET ---
+    // Sent after the PUT so the observation lands at the station's current registered position.
+    // Auth uses Station Password as a query parameter. Rate-limited to 1 per 5 minutes by Windy.
+    if (Object.keys(weather).length > 0) {
+      const weatherParams = new URLSearchParams({
+        id: options.stationId,
+        PASSWORD: options.stationPassword,
+        ts: Math.floor(Date.now() / 1000),
+        ...weather
+      }).toString();
+
+      app.debug(`Windy Submission (GET): ${JSON.stringify(weather)}`);
+
+      try {
+        await axios.get(`https://stations.windy.com/api/v2/observation/update?${weatherParams}`, {
+          timeout: 30000
+        });
+        const time = new Date().toLocaleTimeString([], { hour12: false });
+        
+        // User-friendly status: converts m/s -> kn and Pa -> kPa for dashboard readability
+        const displayMap = [];
+        if (weather.wind) displayMap.push(`W:${(weather.wind * 1.94384).toFixed(1)}kn`);
+        if (weather.gust) displayMap.push(`G:${(weather.gust * 1.94384).toFixed(1)}kn`);
+        if (weather.winddir) displayMap.push(`D:${weather.winddir}°`);
+        if (weather.temp) displayMap.push(`T:${weather.temp}C`);
+        if (weather.pressure) displayMap.push(`P:${(weather.pressure / 1000).toFixed(2)}kPa`);
+        if (weather.rh) displayMap.push(`H:${weather.rh}%`);
+
+        const sensorFlags = displayMap.join('|');
+        lastReportString = `[${sensorFlags}] at ${time}`;
+        app.setPluginStatus(`${lastReportString} | Delta: ${Math.round(currentDistance)}m`);
+
+        // Reset peak gust tracker after successful report
+        peakGust = 0;
+      } catch (err) {
+        const msg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
+        app.error('Windy Observation Error:', msg);
+        app.setPluginError(`Observation failed: ${msg}`);
+      }
+    } else {
+      app.setPluginStatus(`Waiting for sensor data | Delta: ${Math.round(currentDistance)}m`);
     }
   }
 
   /**
    * Fetches weather data from Signal K and converts values to Windy-standard units.
-   * K -> °C, Ratio -> %
+   * K -> Â°C, Ratio -> %
    * Signal K provides Pa. Windy API v2 expects Pa. (v1.0.8 Update)
    */
   function getStationData(options) {
