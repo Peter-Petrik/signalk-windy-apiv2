@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Refined Dashboard Status**: Improved the live heartbeat display to show a combined view of the last successful sensor data, current displacement (Delta), and the reporting countdown.
 - **Share Option Formatting**: Updated the `shareOption` legend into a concatenated string to describe Public, Windy-only, and Private data policies in the user interface.
 
+## [1.0.9] - 2026-01-26
+
+### Fixed
+- **Pressure Parameter**: Corrected the observation parameter name to `pressure` for Windy API v2 compliance. Updated documentation to match.
+
 ## [1.0.8] - 2026-01-26
 
 ### Added

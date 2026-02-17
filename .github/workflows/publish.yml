@@ -1,10 +1,14 @@
-# Automated npm publish triggered by version tags.
+# Automated npm publish and GitHub Release triggered by version tags.
 # When a tag matching v* (e.g., v1.2.0) is pushed to GitHub,
-# this workflow publishes the package to the npm registry.
+# this workflow:
+#   1. Extracts the matching version entry from CHANGELOG.md
+#   2. Creates a GitHub Release with those notes
+#   3. Publishes the package to the npm registry
 #
-# Authentication uses npm Trusted Publishing (OIDC) — no stored
-# secrets or tokens required. The trust relationship is configured
-# on the npm package settings page under Trusted Publishing.
+# Authentication:
+#   - npm: Trusted Publishing (OIDC) — no stored secrets or tokens required.
+#     The trust relationship is configured on the npm package settings page.
+#   - GitHub Release: Uses the default GITHUB_TOKEN provided by Actions.
 #
 # Trusted Publishing configuration (npmjs.com):
 #   - Repository owner: Peter-Petrik
@@ -23,9 +27,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
 
-    # Required for npm Trusted Publishing (OIDC token exchange)
+    # Required permissions:
+    #   id-token: write — npm Trusted Publishing (OIDC token exchange)
+    #   contents: write — creating GitHub Releases
     permissions:
       id-token: write
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -45,6 +52,37 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Extract the release notes for this version from CHANGELOG.md.
+      # Matches everything between the ## [X.Y.Z] header for the tagged
+      # version and the next ## [ header (or end of file).
+      - name: Extract release notes from CHANGELOG
+        id: changelog
+        run: |
+          # Strip the leading 'v' from the tag to match CHANGELOG format
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Extract the section between this version's header and the next
+          NOTES=$(awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "\\[" ver "\\]") found=1
+              next
+            }
+            found { print }
+          ' CHANGELOG.md)
+
+          # Strip any CHANGELOG comparison links (e.g., [1.0.0]: https://...)
+          NOTES=$(echo "$NOTES" | sed '/^\[.*\]: https:\/\//d')
+
+          # Write to a file to preserve multiline content
+          echo "$NOTES" > release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          name: ${{ github.ref_name }}
 
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
