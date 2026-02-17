@@ -6,6 +6,7 @@ node_modules/
 plugin-config-data/
 *.json
 !package.json
+!package-lock.json
 
 # Logs
 logs
