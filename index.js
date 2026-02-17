@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.2.0 - Fix station offline when underway (Issue #4)
+ * v1.3.0 - Rate limit awareness and dashboard improvements
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -34,21 +34,23 @@ module.exports = function (app) {
 
   /**
    * Heartbeat: Updates the Signal K Dashboard status with a live countdown.
-   * Refined to show Last Report data, distance from baseline (Delta), and Countdown.
+   * Format: "Next: XmXXs | Δ###m | W:## G:## D:### T:## P:### H:## | HH:MM"
+   * Ordered by time-sensitivity: countdown first, sensor data in middle,
+   * timestamp last (degrades gracefully if dashboard truncates).
    */
-  const updateHeartbeatStatus = (msgPrefix = 'Next report in') => {
+  const updateHeartbeatStatus = (msgPrefix = 'Next') => {
     const remainingMs = nextRunTime - Date.now();
     if (remainingMs > 0) {
       const min = Math.floor(remainingMs / 60000);
       const sec = Math.floor((remainingMs % 60000) / 1000);
       
-      // Build the components of the status string
-      const heartbeat = `${msgPrefix}: ${min}m ${sec}s`;
-      const movement = `Delta: ${Math.round(currentDistance)}m`;
+      // Build compact status: countdown and distance from baseline first
+      const heartbeat = `${msgPrefix}: ${min}m${sec < 10 ? '0' : ''}${sec}s`;
+      const movement = `\u0394${Math.round(currentDistance)}m`;
       
-      // Combine last submitted data with the countdown and movement delta
+      // Append last sensor data and timestamp if available (truncation-safe at the end)
       const status = lastReportString 
-        ? `${lastReportString} | ${movement} | ${heartbeat}`
+        ? `${heartbeat} | ${movement} | ${lastReportString}`
         : `${heartbeat} | ${movement}`;
         
       app.setPluginStatus(status);
@@ -235,21 +237,22 @@ module.exports = function (app) {
     if (remainingTime <= 0) {
       // Warm-up delay: Give Signal K 15 seconds to receive sensor data before first report
       nextRunTime = Date.now() + 15000;
-      statusTimer = setInterval(() => updateHeartbeatStatus('Warming up'), 1000);
+      statusTimer = setInterval(() => updateHeartbeatStatus('Warm'), 1000);
       
-      timer = setTimeout(() => {
+      timer = setTimeout(async () => {
         clearInterval(statusTimer); // Stop warm-up countdown
-        reportToWindy(options, !!options.forceUpdate);
-        scheduleNext(options);
+        const rescheduled = await reportToWindy(options, !!options.forceUpdate);
+        // If reportToWindy already rescheduled (e.g., 429 retry_after), don't double-schedule
+        if (!rescheduled) scheduleNext(options);
       }, 15000);
     } else {
       // Resuming logic with Heartbeat integration
-      statusTimer = setInterval(() => updateHeartbeatStatus('Resuming'), 1000);
+      statusTimer = setInterval(() => updateHeartbeatStatus('Resume'), 1000);
       
-      timer = setTimeout(() => { 
+      timer = setTimeout(async () => { 
         clearInterval(statusTimer);
-        reportToWindy(options); 
-        scheduleNext(options); 
+        const rescheduled = await reportToWindy(options); 
+        if (!rescheduled) scheduleNext(options); 
       }, remainingTime);
     }
   };
@@ -376,36 +379,78 @@ module.exports = function (app) {
         await axios.get(`https://stations.windy.com/api/v2/observation/update?${weatherParams}`, {
           timeout: 30000
         });
-        const time = new Date().toLocaleTimeString([], { hour12: false });
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
         
-        // User-friendly status: converts m/s -> kn and Pa -> kPa for dashboard readability
+        // Compact dashboard status: no units, ordered for truncation safety.
+        // Wind values converted from m/s to knots for display only.
+        // Pressure converted from Pa to kPa (1 decimal) for display only.
         const displayMap = [];
-        if (weather.wind) displayMap.push(`W:${(weather.wind * 1.94384).toFixed(1)}kn`);
-        if (weather.gust) displayMap.push(`G:${(weather.gust * 1.94384).toFixed(1)}kn`);
-        if (weather.winddir) displayMap.push(`D:${weather.winddir}°`);
-        if (weather.temp) displayMap.push(`T:${weather.temp}C`);
-        if (weather.pressure) displayMap.push(`P:${(weather.pressure / 1000).toFixed(2)}kPa`);
-        if (weather.rh) displayMap.push(`H:${weather.rh}%`);
+        if (weather.wind) displayMap.push(`W:${(weather.wind * 1.94384).toFixed(1)}`);
+        if (weather.gust) displayMap.push(`G:${(weather.gust * 1.94384).toFixed(1)}`);
+        if (weather.winddir !== undefined) displayMap.push(`D:${weather.winddir}`);
+        if (weather.temp) displayMap.push(`T:${weather.temp}`);
+        if (weather.pressure) displayMap.push(`P:${(weather.pressure / 1000).toFixed(1)}`);
+        if (weather.rh !== undefined) displayMap.push(`H:${weather.rh}`);
 
-        const sensorFlags = displayMap.join('|');
-        lastReportString = `[${sensorFlags}] at ${time}`;
-        app.setPluginStatus(`${lastReportString} | Delta: ${Math.round(currentDistance)}m`);
+        // Format: "W:23.9 G:29.7 D:314 T:9.0 P:100.8 H:65 | 12:33"
+        // Sensor data and timestamp stored for heartbeat display between intervals.
+        // Timestamp last — degrades gracefully if dashboard truncates.
+        const sensorFlags = displayMap.join(' ');
+        lastReportString = `${sensorFlags} | ${time}`;
+        app.setPluginStatus(`Next: 0m00s | \u0394${Math.round(currentDistance)}m | ${lastReportString}`);
 
         // Reset peak gust tracker after successful report
         peakGust = 0;
       } catch (err) {
+        // --- RATE LIMIT HANDLING ---
+        // Windy returns HTTP 429 with {"retry_after":"<ISO-8601 timestamp>"} when the
+        // observation rate limit (1 per 5 minutes per station) is exceeded. This is
+        // expected flow — not an error — especially on first cycle after restart when
+        // the plugin's timer may not be aligned with Windy's rate limit window.
+        // Parse the retry_after timestamp and reschedule precisely instead of waiting
+        // the full interval. The current observation is discarded (not queued).
+        if (err.response && err.response.status === 429) {
+          let retryDelay = null;
+          try {
+            const retryAfter = err.response.data && err.response.data.retry_after;
+            if (retryAfter) {
+              retryDelay = new Date(retryAfter).getTime() - Date.now();
+              // Sanity check: delay should be positive and no more than 10 minutes
+              if (retryDelay <= 0 || retryDelay > 600000) retryDelay = null;
+            }
+          } catch (parseErr) {
+            app.debug(`Could not parse retry_after: ${parseErr.message}`);
+          }
+
+          if (retryDelay) {
+            app.debug(`Rate limited by Windy. Retry after ${Math.ceil(retryDelay / 1000)}s (from retry_after timestamp)`);
+            // Reschedule at the exact retry_after time instead of waiting the full interval.
+            // Returns true so the caller knows not to call scheduleNext again.
+            scheduleNext(options, retryDelay);
+            return true;
+          } else {
+            // 429 received but could not parse retry_after — fall back to normal interval
+            app.debug('Rate limited by Windy (429). Could not parse retry_after, using normal interval.');
+          }
+          // Do not call setPluginError for 429 — this is expected flow, not an error condition
+          return false;
+        }
+
+        // Genuine errors: 4xx (other than 429), 5xx, network failures, timeouts
         const msg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
         app.error('Windy Observation Error:', msg);
         app.setPluginError(`Observation failed: ${msg}`);
       }
     } else {
-      app.setPluginStatus(`Waiting for sensor data | Delta: ${Math.round(currentDistance)}m`);
+      app.setPluginStatus(`Next: 0m00s | \u0394${Math.round(currentDistance)}m | Waiting for sensor data`);
     }
+
+    return false;
   }
 
   /**
    * Fetches weather data from Signal K and converts values to Windy-standard units.
-   * K -> Â°C, Ratio -> %
+   * K -> °C, Ratio -> %
    * Signal K provides Pa. Windy API v2 expects Pa. (v1.0.8 Update)
    */
   function getStationData(options) {
@@ -435,20 +480,27 @@ module.exports = function (app) {
   }
 
   /**
-   * Schedules the next reporting interval and updates the persistent nextRunTime timestamp.
+   * Schedules the next reporting cycle. By default uses the configured interval.
+   * When overrideMs is provided (e.g., from a 429 retry_after response), that
+   * delay is used instead — allowing precise rescheduling to Windy's rate limit window.
    */
-  function scheduleNext(options) {
-    const interval = (options.interval || 5) * 60000;
+  function scheduleNext(options, overrideMs = null) {
+    const interval = overrideMs || (options.interval || 5) * 60000;
     nextRunTime = Date.now() + interval;
 
     // Start countdown heartbeat for the new interval
     if (statusTimer) clearInterval(statusTimer);
     statusTimer = setInterval(() => updateHeartbeatStatus(), 1000);
 
-    timer = setTimeout(() => { 
+    // Clear any existing timer before scheduling (important for 429 reschedule path
+    // where scheduleNext is called from within reportToWindy's catch block)
+    if (timer) clearTimeout(timer);
+
+    timer = setTimeout(async () => { 
       clearInterval(statusTimer); // Stop countdown before reporting
-      reportToWindy(options); 
-      scheduleNext(options); 
+      const rescheduled = await reportToWindy(options); 
+      // If reportToWindy already rescheduled (e.g., 429 retry_after), don't double-schedule
+      if (!rescheduled) scheduleNext(options); 
     }, interval);
   }
 
