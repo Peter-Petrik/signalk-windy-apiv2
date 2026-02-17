@@ -1,0 +1,44 @@
+# Automated npm publish triggered by version tags.
+# When a tag matching v* (e.g., v1.2.0) is pushed to GitHub,
+# this workflow publishes the package to the npm registry.
+#
+# Authentication uses npm Trusted Publishing (OIDC) — no stored
+# secrets or tokens required. The trust relationship is configured
+# on the npm package settings page under Trusted Publishing.
+#
+# Trusted Publishing configuration (npmjs.com):
+#   - Repository owner: Peter-Petrik
+#   - Repository name: signalk-windy-apiv2
+#   - Workflow filename: publish.yml
+#   - Environment: (none)
+
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    # Required for npm Trusted Publishing (OIDC token exchange)
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish to npm with provenance
+        run: npm publish --provenance --access public
