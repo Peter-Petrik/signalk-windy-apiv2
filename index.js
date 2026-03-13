@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.3.1 - Fix wind direction 360° boundary error
+ * v1.3.2 - Transient network errors no longer trigger red dashboard indicator
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -34,7 +34,7 @@ module.exports = function (app) {
 
   /**
    * Heartbeat: Updates the Signal K Dashboard status with a live countdown.
-   * Format: "Next: XmXXs | Î”###m | W:## G:## D:### T:## P:### H:## | HH:MM"
+   * Format: "Next: XmXXs | Δ###m | W:## G:## D:### T:## P:### H:## | HH:MM"
    * Ordered by time-sensitivity: countdown first, sensor data in middle,
    * timestamp last (degrades gracefully if dashboard truncates).
    */
@@ -354,11 +354,22 @@ module.exports = function (app) {
         currentDistance = 0;
         app.debug('Station metadata updated successfully');
       } catch (err) {
-        const detail = err.response ? JSON.stringify(err.response.data) : err.message;
-        const status = err.response ? err.response.status : 'N/A';
-        app.error(`Windy Metadata Error (${status}): ${detail}`);
-        app.setPluginError(`Metadata update failed (${status})`);
-        // Continue to observation â€” weather data is still valuable even if location update failed
+        // Distinguish transient network errors from API errors using err.response.
+        // Network-level failures (DNS, TLS, timeout, socket reset) have no err.response
+        // and are expected in marine connectivity environments (Starlink handovers,
+        // cellular gaps, marina WiFi). These are logged but do not trigger the red
+        // dashboard indicator — the plugin recovers on the next cycle.
+        // API-level failures (4xx, 5xx) have err.response and indicate a genuine
+        // problem requiring attention (wrong credentials, malformed payload, etc.).
+        if (err.response) {
+          const detail = JSON.stringify(err.response.data);
+          const status = err.response.status;
+          app.error(`Windy Metadata Error (${status}): ${detail}`);
+          app.setPluginError(`Metadata update failed (${status})`);
+        } else {
+          app.error(`Windy Metadata Error (network): ${err.message}`);
+        }
+        // Continue to observation — weather data is still valuable even if location update failed
       }
     }
 
@@ -394,7 +405,7 @@ module.exports = function (app) {
 
         // Format: "W:23.9 G:29.7 D:314 T:9.0 P:100.8 H:65 | 12:33"
         // Sensor data and timestamp stored for heartbeat display between intervals.
-        // Timestamp last â€” degrades gracefully if dashboard truncates.
+        // Timestamp last — degrades gracefully if dashboard truncates.
         const sensorFlags = displayMap.join(' ');
         lastReportString = `${sensorFlags} | ${time}`;
         app.setPluginStatus(`Next: 0m00s | \u0394${Math.round(currentDistance)}m | ${lastReportString}`);
@@ -405,7 +416,7 @@ module.exports = function (app) {
         // --- RATE LIMIT HANDLING ---
         // Windy returns HTTP 429 with {"retry_after":"<ISO-8601 timestamp>"} when the
         // observation rate limit (1 per 5 minutes per station) is exceeded. This is
-        // expected flow â€” not an error â€” especially on first cycle after restart when
+        // expected flow — not an error — especially on first cycle after restart when
         // the plugin's timer may not be aligned with Windy's rate limit window.
         // Parse the retry_after timestamp and reschedule precisely instead of waiting
         // the full interval. The current observation is discarded (not queued).
@@ -429,17 +440,34 @@ module.exports = function (app) {
             scheduleNext(options, retryDelay);
             return true;
           } else {
-            // 429 received but could not parse retry_after â€” fall back to normal interval
+            // 429 received but could not parse retry_after — fall back to normal interval
             app.debug('Rate limited by Windy (429). Could not parse retry_after, using normal interval.');
           }
-          // Do not call setPluginError for 429 â€” this is expected flow, not an error condition
+          // Do not call setPluginError for 429 — this is expected flow, not an error condition
           return false;
         }
 
-        // Genuine errors: 4xx (other than 429), 5xx, network failures, timeouts
-        const msg = err.response ? `Status ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message;
-        app.error('Windy Observation Error:', msg);
-        app.setPluginError(`Observation failed: ${msg}`);
+        // --- ERROR CLASSIFICATION ---
+        // Errors are split into two categories based on the presence of err.response:
+        //
+        // Network-level (no err.response): DNS failures (EAI_AGAIN, ENOTFOUND),
+        // TLS handshake interruptions, connection timeouts (ETIMEDOUT), socket resets
+        // (ECONNRESET), unreachable hosts (ENETUNREACH, EHOSTUNREACH), and axios
+        // timeouts. These are expected in marine connectivity environments and
+        // self-correct on the next cycle. Logged at error level for server log
+        // visibility but do not trigger setPluginError — the dashboard stays green.
+        //
+        // API-level (has err.response): HTTP 4xx (other than 429) and 5xx responses
+        // from Windy indicating a genuine problem (bad credentials, malformed request,
+        // server error). These trigger both app.error and setPluginError for the red
+        // dashboard indicator, as they typically require user attention.
+        if (err.response) {
+          const msg = `Status ${err.response.status}: ${JSON.stringify(err.response.data)}`;
+          app.error(`Windy Observation Error: ${msg}`);
+          app.setPluginError(`Observation failed: ${msg}`);
+        } else {
+          app.error(`Windy Observation Error (network): ${err.message}`);
+        }
       }
     } else {
       app.setPluginStatus(`Next: 0m00s | \u0394${Math.round(currentDistance)}m | Waiting for sensor data`);
@@ -450,7 +478,7 @@ module.exports = function (app) {
 
   /**
    * Fetches weather data from Signal K and converts values to Windy-standard units.
-   * K -> Â°C, Ratio -> %
+   * K -> °C, Ratio -> %
    * Signal K provides Pa. Windy API v2 expects Pa. (v1.0.8 Update)
    */
   function getStationData(options) {
@@ -485,7 +513,7 @@ module.exports = function (app) {
   /**
    * Schedules the next reporting cycle. By default uses the configured interval.
    * When overrideMs is provided (e.g., from a 429 retry_after response), that
-   * delay is used instead â€” allowing precise rescheduling to Windy's rate limit window.
+   * delay is used instead — allowing precise rescheduling to Windy's rate limit window.
    */
   function scheduleNext(options, overrideMs = null) {
     const interval = overrideMs || (options.interval || 5) * 60000;

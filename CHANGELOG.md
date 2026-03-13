@@ -5,6 +5,11 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-03-13
+
+### Changed
+- **Quieter Network Error Handling ([#7](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/7))**: Transient network errors (DNS failures, TLS handshake interruptions, connection timeouts, socket resets) no longer trigger the red error indicator on the Signal K dashboard. These errors are expected in marine connectivity environments (Starlink handovers, cellular gaps, marina WiFi) and self-correct on the next reporting cycle. Network errors are still logged at error level for server log visibility. API-level errors (4xx, 5xx) continue to trigger the red indicator as before. This follows the same design principle established for 429 rate limit handling in v1.3.0: expected operational conditions should not produce false error indicators. Inspired by [#6](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/6).
+
 ## [1.3.1] - 2026-03-06
 
 ### Fixed
@@ -13,12 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.0] - 2026-02-17
 
 ### Added
-- **Rate Limit Awareness ([retry_after](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues))**: The plugin now handles Windy's HTTP 429 rate limit responses by parsing the `retry_after` timestamp from the response body and rescheduling the next observation attempt at precisely the right time. Rate limit responses are treated as expected flow (debug log only) rather than errors, preventing false red indicators on the Signal K dashboard â€” particularly after a server restart when the plugin's timer may not be aligned with Windy's rate limit window.
+- **Rate Limit Awareness ([retry_after](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues))**: The plugin now handles Windy's HTTP 429 rate limit responses by parsing the `retry_after` timestamp from the response body and rescheduling the next observation attempt at precisely the right time. Rate limit responses are treated as expected flow (debug log only) rather than errors, preventing false red indicators on the Signal K dashboard — particularly after a server restart when the plugin's timer may not be aligned with Windy's rate limit window.
 - **Migration Guide**: Added [MIGRATION.md](MIGRATION.md) with step-by-step instructions for users switching from the legacy signalk-windy plugin, including credential model differences and Signal K path mapping.
 - **Contributing Guidelines**: Added [CONTRIBUTING.md](CONTRIBUTING.md) with development setup, testing, and pull request guidance.
 
 ### Changed
-- **Compact Dashboard Format**: Redesigned the heartbeat status string to fit within the Signal K dashboard display width (~84 characters). Countdown and distance from baseline appear first (most time-sensitive), followed by sensor readings without units (labels are self-explanatory), with the last submission timestamp at the end (degrades gracefully if truncated). Example: `Next: 3m12s | Î”3m | W:23.9 G:29.7 D:314 T:9.0 P:100.8 H:65 | 12:33`
+- **Compact Dashboard Format**: Redesigned the heartbeat status string to fit within the Signal K dashboard display width (~84 characters). Countdown and distance from baseline appear first (most time-sensitive), followed by sensor readings without units (labels are self-explanatory), with the last submission timestamp at the end (degrades gracefully if truncated). Example: `Next: 3m12s | Δ3m | W:23.9 G:29.7 D:314 T:9.0 P:100.8 H:65 | 12:33`
 - **Pressure Display Precision**: Dashboard pressure display reduced from 2 decimal places to 1 (e.g., `P:100.8` instead of `P:100.78kPa`). Transmitted API values are unchanged.
 - **README Improvements**: Added Project Status section, Support section, corrected precipitation documentation (mm for the last 60 minutes, not since midnight), added link to Migration Guide and Contributing Guidelines, and updated Future Enhancements to reflect current roadmap.
 
@@ -138,7 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 * **Position Update Reliability**: Corrected an issue where boat positions would not update on the map due to API v1 legacy payloads being used in a v2 environment.
-* **Unit Conversion Validation**: Re-verified and locked mathematical conversions for Pressure (Pa to hPa), Temperature (K to Ãƒâ€šÃ‚Â°C), and Humidity (Ratio to %).
+* **Unit Conversion Validation**: Re-verified and locked mathematical conversions for Pressure (Pa to hPa), Temperature (K to °C), and Humidity (Ratio to %).
 
 ## [1.0.2] - 2026-01-25
 
@@ -203,7 +208,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.1.1...v1.2.0
