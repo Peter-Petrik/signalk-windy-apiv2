@@ -5,6 +5,17 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-04-05
+
+### Added
+- **First-Run Position Establishment ([#8](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/8))**: On fresh install, migration from the legacy plugin, or manual state reset (deleting `state.json`), the plugin now sends a station position update (PUT) on the first reporting cycle regardless of the movement guard. Previously, the first cycle would set the GPS baseline to the current position and find zero distance, skipping the PUT entirely — leaving the station at whatever position was last reported by a previous plugin (or blank for new registrations). A `hasReportedPosition` flag is persisted in `state.json` so subsequent restarts do not re-trigger this behavior.
+
+### Changed
+- **README Reset Documentation**: Replaced the "Manual Reset" section with "Restart vs Full Reset", clarifying the distinction between a plugin restart (Submit — preserves state) and a full reset (deleting `state.json` — clears movement baseline and forces position re-establishment on Windy).
+
+### Fixed
+- **Force GPS Updates Not Working ([#8](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/8))**: The "Force GPS Updates" configuration toggle was only applied on the very first reporting cycle after a cold start with no saved state. On all subsequent cycles — and on every resume from saved state (including after a configuration save) — the toggle was silently ignored. The root cause was a `force` parameter on the internal `reportToWindy` function that only one of three call sites passed correctly. The fix removes the redundant parameter and reads the `forceUpdate` setting directly from the options object, ensuring the toggle works on every reporting cycle in every code path. Reported by @CruisingSpirit.
+
 ## [1.3.2] - 2026-03-13
 
 ### Changed
@@ -208,7 +219,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.2.0...v1.3.0

@@ -1,6 +1,6 @@
 /**
  * Signal K Windy API v2 Reporter
- * v1.3.2 - Transient network errors no longer trigger red dashboard indicator
+ * v1.4.0 - Fix Force GPS Updates, add first-run position establishment
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  */
@@ -17,6 +17,13 @@ module.exports = function (app) {
   let nextRunTime = 0;
   let kx = 1; // Latitude scaling factor for Equirectangular projection (Cheap Ruler)
   let lastReportString = ''; // Persistent storage for the last submitted data string
+
+  // Tracks whether the plugin has ever successfully sent a position update (PUT) to
+  // Windy since state was last initialized. When false, the first reporting cycle
+  // forces a PUT regardless of the movement guard — ensuring the station appears at
+  // the correct location on Windy after a fresh install, migration, or state reset.
+  // Persisted in state.json so it survives server restarts.
+  let hasReportedPosition = false;
 
   // Peak Gust Tracking Variables
   let peakGust = 0;
@@ -206,6 +213,7 @@ module.exports = function (app) {
         lastSentPos = state.lastSentPos || { lat: 0, lon: 0 };
         currentDistance = state.currentDistance || 0;
         nextRunTime = state.nextRunTime || 0;
+        hasReportedPosition = state.hasReportedPosition || false;
         if (lastSentPos.lat) kx = Math.cos(lastSentPos.lat * Math.PI / 180);
       }
     } catch (e) { app.debug('Starting with fresh internal state.'); }
@@ -241,7 +249,7 @@ module.exports = function (app) {
       
       timer = setTimeout(async () => {
         clearInterval(statusTimer); // Stop warm-up countdown
-        const rescheduled = await reportToWindy(options, !!options.forceUpdate);
+        const rescheduled = await reportToWindy(options);
         // If reportToWindy already rescheduled (e.g., 429 retry_after), don't double-schedule
         if (!rescheduled) scheduleNext(options);
       }, 15000);
@@ -265,7 +273,7 @@ module.exports = function (app) {
     try {
       const dataDir = app.getDataDirPath();
       const stateFile = getStateFilePath();
-      const state = { lastSentPos, currentDistance, nextRunTime };
+      const state = { lastSentPos, currentDistance, nextRunTime, hasReportedPosition };
       
       if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
@@ -295,23 +303,36 @@ module.exports = function (app) {
 
   /**
    * Reports data using separate endpoints as required by API v2.
-   * When the distance threshold is exceeded (vessel underway), the station location
-   * is updated via PUT first, then the observation is sent via GET immediately after.
-   * This ensures Windy receives observation data at the newly registered position,
-   * preventing the station from being marked offline after a location update.
+   * 
+   * A metadata PUT (station position update) is sent when any of three conditions is met:
+   *   1. options.forceUpdate is enabled — the persistent config toggle that bypasses
+   *      the movement guard on every cycle.
+   *   2. !hasReportedPosition — the plugin has never sent a successful PUT since state
+   *      was initialized. Ensures the station appears at the correct location after
+   *      a fresh install, migration from the legacy plugin, or manual state reset.
+   *   3. currentDistance >= minMove — the normal movement guard threshold is exceeded.
+   *
+   * When a PUT is needed, it is sent before the observation GET so Windy receives
+   * weather data at the newly registered position (prevents the station from being
+   * marked offline after a location update).
    * PUTs do not count against Windy's observation rate limit (confirmed via testing).
    */
-  async function reportToWindy(options, force = false) {
+  async function reportToWindy(options) {
     const weather = getStationData(options);
     const pos = app.getSelfPath('navigation.position');
-    const shouldUpdateGPS = force || currentDistance >= (options.minMove || 300);
+
+    // Three conditions trigger a station position update (PUT):
+    // 1. Force GPS Updates config toggle — bypasses movement guard every cycle
+    // 2. First-run establishment — station has never been positioned on Windy from this state
+    // 3. Movement guard threshold — vessel has moved beyond the configured distance
+    const shouldUpdateGPS = options.forceUpdate || !hasReportedPosition || currentDistance >= (options.minMove || 300);
 
     // GAP CLOSER: If no native gust is available, or if tracked peak is higher, use peakGust
     if (peakGust > (weather.gust || 0)) {
       weather.gust = peakGust.toFixed(1);
     }
 
-    // --- STEP 1: METADATA PUT (if distance threshold exceeded) ---
+    // --- STEP 1: METADATA PUT (if position update conditions are met) ---
     // Must complete before the observation GET so Windy has the correct station
     // position when the observation arrives. Auth uses Global API Key in headers.
     if (pos && pos.value && shouldUpdateGPS) {
@@ -352,6 +373,9 @@ module.exports = function (app) {
         lastSentPos = { lat: pos.value.latitude, lon: pos.value.longitude };
         kx = Math.cos(pos.value.latitude * Math.PI / 180);
         currentDistance = 0;
+        // Mark that the station position has been established on Windy.
+        // Persisted to state.json so subsequent restarts do not re-trigger this path.
+        hasReportedPosition = true;
         app.debug('Station metadata updated successfully');
       } catch (err) {
         // Distinguish transient network errors from API errors using err.response.

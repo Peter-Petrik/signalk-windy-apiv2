@@ -65,15 +65,19 @@ To stream logs specifically for this plugin:
 journalctl -u signalk-server -f | grep "signalk-windy-apiv2"
 ```
 
-### Manual Reset
-To clear the persistent state (for example, to reset the movement baseline or force an immediate timer restart):
+### Restart vs Full Reset
 
-1. Open the Signal K **Dashboard**.
-2. Navigate to **Server > Plugin Config**.
-3. Select the **Windy API v2 Reporter** from the list.
-4. Click the **Submit** button at the bottom of the configuration page.
+The plugin maintains persistent state in a `state.json` file within the Signal K data directory. There are two levels of reset depending on the situation.
 
-Settings do not need to change; clicking "Submit" triggers the plugin to stop and restart, which clears the session cache and re-initializes all trackers.
+**Restart (apply config changes):** Navigate to **Server > Plugin Config**, select the Windy API v2 Reporter, and click **Submit**. This restarts the plugin with the current settings. The movement baseline, reporting timer, and position establishment state are preserved — only configuration changes (credentials, interval, thresholds) take effect.
+
+**Full reset (clear all state):** Delete the plugin's `state.json` file and restart. This clears the movement baseline, resets the reporting timer, and forces a fresh position update to Windy on the next reporting cycle. The state file is located at:
+
+```
+~/.signalk/plugin-config-data/signalk-windy-apiv2/state.json
+```
+
+A full reset is useful after migration from the legacy plugin, when the station position on Windy needs to be re-established, or when troubleshooting position-related issues.
 
 ### Diagnostic Reporting
 To generate a log summary for troubleshooting:
