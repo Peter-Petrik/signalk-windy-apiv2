@@ -5,6 +5,14 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-05-30
+
+### Changed
+- **Credential-Aware Error Messages**: Failed submissions now produce dashboard messages that name the credential to check. A rejected Station Password (HTTP 400 with a password-related message body on the observation endpoint) reports "Station Password rejected by Windy". A rejected metadata update (HTTP 403 on the station endpoint) reports "Windy rejected the API Key or Station ID" — the Windy API returns the same 403 whether the API Key is wrong or the Station ID does not exist, so both candidates are named rather than guessing. These changes affect only the wording of error messages; the conditions under which the dashboard shows the red error indicator are unchanged. Error-code behavior was confirmed against the production Windy API via live testing.
+
+### Security
+- **Bearer Token Authentication for Observations**: The Station Password is now sent to the observation endpoint as a Bearer token in the `Authorization` header rather than as a `PASSWORD` query parameter. This keeps the credential out of the request URL, where it could otherwise be exposed in intermediary or proxy logs. Both authentication forms are accepted by the Windy v2 API; the header form is the more defensive choice. Verified against the production Windy API via live testing. No user action or reconfiguration is required — the change is internal to how the plugin authenticates.
+
 ## [1.4.0] - 2026-04-05
 
 ### Added
@@ -219,7 +227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.0...v1.3.1

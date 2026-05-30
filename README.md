@@ -88,6 +88,17 @@ journalctl -u signalk-server -n 100 --no-pager | grep "signalk-windy-apiv2"
 
 When sharing logs, redact the **Station Password** and **API Key** before posting to public forums or GitHub issues.
 
+### Troubleshooting
+
+**Confirming credentials are valid.** The plugin validates credentials implicitly on each reporting cycle: a successful submission means the credentials are correct. There is no separate "test" action — if the dashboard shows sensor readings and a normal countdown after the warm-up period, the Station Password, API Key, and Station ID are all working. The verdict appears on the first reporting cycle after the plugin starts or is restarted via Submit (after the 15-second warm-up on a fresh start, or after the remaining interval on a resume), not instantly on Submit.
+
+**Credential error messages.** When a submission is rejected for an authentication reason, the dashboard shows a message naming the credential to check:
+
+1. **"Station Password rejected by Windy"** — The Station Password is incorrect. Verify it against the value shown on the station detail page at [stations.windy.com](https://stations.windy.com). Note that an incorrect Station ID can also produce this message, because the Windy API reports both as a password problem.
+2. **"Windy rejected the API Key or Station ID (403)"** — Either the Global API Key or the Station ID is incorrect. The Windy API returns the same response for both, so verify each: the API Key in account settings and the Station ID on the station list.
+
+**Pressure not shown on the Windy station page.** Pressure data is transmitted correctly but may not appear in the Windy station UI. Windy displays pressure only for professional stations; for personal weather stations the value is accepted and stored (visible in the data graph) but not shown in the station inspector. This is a Windy display limitation, not a plugin issue — the data is being reported.
+
 ## Future Enhancements
 
 * **Precipitation Support**: The Windy API v2 accepts a `precip` parameter for rain in mm for the last 60 minutes. With access to a rain gauge providing the appropriate Signal K path, this would extend the reported data set.

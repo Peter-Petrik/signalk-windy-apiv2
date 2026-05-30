@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.4.0 - Fix Force GPS Updates, add first-run position establishment
+ * v1.5.0 - Bearer-token auth for observations, credential-aware error messages
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -406,7 +406,19 @@ module.exports = function (app) {
           const detail = JSON.stringify(err.response.data);
           const status = err.response.status;
           app.error(`Windy Metadata Error (${status}): ${detail}`);
-          app.setPluginError(`Metadata update failed (${status})`);
+
+          // CREDENTIAL-AWARE MESSAGING (v1.5.0):
+          // Windy returns HTTP 403 ("Forbidden resource") on the metadata PUT when the
+          // Global API Key is rejected. Confirmed via live testing — but the SAME 403 is
+          // returned whether the API Key is wrong OR the Station ID does not exist. The
+          // API does not distinguish the two, so the message names both candidates rather
+          // than guessing. Other statuses keep the generic message.
+          // Wording change only — a 403 already triggered the red indicator before this.
+          if (status === 403) {
+            app.setPluginError('Windy rejected the API Key or Station ID (403) — verify both in the plugin configuration');
+          } else {
+            app.setPluginError(`Metadata update failed (${status})`);
+          }
         } else {
           app.error(`Windy Metadata Error (network): ${err.message}`);
         }
@@ -416,11 +428,16 @@ module.exports = function (app) {
 
     // --- STEP 2: OBSERVATION GET ---
     // Sent after the PUT so the observation lands at the station's current registered position.
-    // Auth uses Station Password as a query parameter. Rate-limited to 1 per 5 minutes by Windy.
+    // Auth uses the Station Password as a Bearer token in the Authorization header (v1.5.0).
+    // Previously the password was passed as a PASSWORD query parameter; moving it to a header
+    // keeps the secret out of the request URL (and any intermediary/proxy logs). Both forms
+    // are accepted by the Windy v2 API; the header form is the more defensive choice.
+    // Rate-limited to 1 per 5 minutes by Windy.
     if (Object.keys(weather).length > 0) {
+      // Only non-secret parameters go in the query string. The station password is sent
+      // in the Authorization header below, not here.
       const weatherParams = new URLSearchParams({
         id: options.stationId,
-        PASSWORD: options.stationPassword,
         ts: Math.floor(Date.now() / 1000),
         ...weather
       }).toString();
@@ -429,6 +446,7 @@ module.exports = function (app) {
 
       try {
         await axios.get(`https://stations.windy.com/api/v2/observation/update?${weatherParams}`, {
+          headers: { 'Authorization': `Bearer ${options.stationPassword}` },
           timeout: 30000
         });
         const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -505,7 +523,28 @@ module.exports = function (app) {
         if (err.response) {
           const msg = `Status ${err.response.status}: ${JSON.stringify(err.response.data)}`;
           app.error(`Windy Observation Error: ${msg}`);
-          app.setPluginError(`Observation failed: ${msg}`);
+
+          // CREDENTIAL-AWARE MESSAGING (v1.5.0):
+          // Windy returns HTTP 400 with a body like {"message":"Provided password is
+          // invalid",...} when the Station Password (Bearer token) is rejected. Confirmed
+          // via live testing — a wrong password produces a 400, NOT a 401/403, and the
+          // same response appears whether the password or the station ID is wrong (the
+          // API reports both as a password problem). Detect this case and surface a
+          // specific dashboard message naming the Station Password, so the user knows
+          // which credential to check rather than seeing a generic failure.
+          //
+          // Detection is a heuristic: a 400 whose body mentions "password" (case-
+          // insensitive). This survives minor rewording by Windy and degrades gracefully
+          // to the generic message below if they change the wording substantially.
+          // This changes only the WORDING — a 400 already triggered the red indicator
+          // before this change, so error routing is unchanged.
+          const body = err.response.data;
+          const bodyText = typeof body === 'string' ? body : JSON.stringify(body || '');
+          if (err.response.status === 400 && /password/i.test(bodyText)) {
+            app.setPluginError('Station Password rejected by Windy — verify the Station Password in the plugin configuration');
+          } else {
+            app.setPluginError(`Observation failed: ${msg}`);
+          }
         } else {
           app.error(`Windy Observation Error (network): ${err.message}`);
         }
