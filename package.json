@@ -21,7 +21,7 @@
     "name": "Peter Petrik",
     "url": "https://peterpetrik.com"
   },
-  "license": "Apache-2.0",
+  "license": "GPL-3.0-or-later",
   "bugs": {
     "url": "https://github.com/Peter-Petrik/signalk-windy-apiv2/issues"
   },

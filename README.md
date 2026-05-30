@@ -118,4 +118,4 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for guideli
 
 ## License
 
-Copyright 2026 Peter Petrik. Licensed under the [Apache-2.0 License](LICENSE).
+Copyright 2026 Peter Petrik. Licensed under the [GNU General Public License v3.0 or later](LICENSE).

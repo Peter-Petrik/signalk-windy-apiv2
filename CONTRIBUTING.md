@@ -61,4 +61,4 @@ This runs `node --check index.js` to validate syntax.
 
 ## License
 
-By contributing, contributions are licensed under the [Apache-2.0 License](LICENSE).
+By contributing, contributions are licensed under the [GNU General Public License v3.0 or later](LICENSE).
