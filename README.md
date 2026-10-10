@@ -16,25 +16,25 @@ This is the only Signal K plugin targeting the Windy v2 API. Users of the legacy
 - **Live Heartbeat Status**: Enhanced dashboard feedback showing countdown to next report, distance from baseline, current sensor readings, and last submission time.
 - **Radius-Based Movement Guard**: Intelligent GPS reporting that triggers map updates only when the vessel moves beyond a set radius from its last position, preventing "phantom movement" while at anchor.
 - **Peak Gust Tracking**: Captures the highest wind speed reading at 1Hz between reporting intervals, ensuring short-lived gusts are not missed by the 5-minute reporting cycle.
-- **State Persistence**: Keeps the movement baseline and reporting schedule in `state.json` when the plugin is restarted from the admin UI. See [Known Limitations](#known-limitations) for server restarts.
+- **State Persistence**: (v1.5.2+) Saves the movement baseline and reporting schedule to `state.json` after every reporting cycle, so both survive a plugin restart, a server restart, a reboot and a power loss.
 - **Smart Unit Conversion**: Automatically handles conversion from Signal K base units (Kelvin, Pascal, m/s) to Windy standards (°C, Pa, m/s).
 
 ## Mapped Data
 
 ### Observations
 
-Each reporting cycle sends one observation built from the Signal K paths below. The paths are defaults and can be changed under **Sensor Path Overrides (Advanced)** in the plugin configuration. A path with no value is left out of the observation.
+Each reporting cycle sends one observation built from the Signal K paths below. The paths are defaults and can be changed under **Sensor Path Overrides (Advanced)** in the plugin configuration. A path with no value is left out of the observation. So is a value that is not a number or lies outside the range Windy accepts for its field; Windy rejects a whole observation for one such field, so leaving it out keeps the other readings reported. The debug log names every reading that was left out.
 
 | Measurement | Signal K Path (Default) | Windy Parameter | Conversion |
 | :--- | :--- | :--- | :--- |
 | Wind speed | `environment.wind.speedOverGround` | `wind` | None (m/s) |
 | Wind gust | `environment.wind.gust` | `gust` | None (m/s). The highest wind speed seen since the last report is sent when it is higher, or when the path has no value |
-| Wind direction | `environment.wind.directionTrue` | `winddir` | Radians to whole degrees, 0 to 359 |
+| Wind direction | `environment.wind.directionTrue` | `winddir` | Radians to whole degrees, folded into 0 to 359 |
 | Temperature | `environment.outside.temperature` | `temp` | Kelvin to °C |
 | Pressure | `environment.outside.pressure` | `pressure` | None (Pa) |
-| Humidity | `environment.outside.relativeHumidity` | `rh` | Ratio to percent |
+| Humidity | `environment.outside.humidity` | `rh` | Ratio to percent |
 
-Signal K's own NMEA 0183 and NMEA 2000 converters publish outside humidity on `environment.outside.humidity`, and `environment.wind.gust` is not a path in the Signal K specification. On an installation whose humidity comes from a standard instrument, the humidity path has to be changed to `environment.outside.humidity` for humidity to be reported.
+`environment.outside.humidity` is the humidity path of the Signal K specification and the one Signal K's own NMEA 0183 and NMEA 2000 converters publish. Versions before 1.5.2 read `environment.outside.relativeHumidity`. When the configured path is one of these two and holds no value, the other is read, so an existing configuration needs no change. `environment.wind.gust` is not a path in the Signal K specification; where no source publishes it, the gust is the highest wind speed seen since the last report.
 
 ### Station Record
 
@@ -43,11 +43,11 @@ When the vessel has moved beyond the movement threshold, the plugin updates the 
 | Station Field | Source |
 | :--- | :--- |
 | `lat`, `lon` | `navigation.position`, rounded to five decimals |
-| `elev_m` | `navigation.gnss.antennaAltitude` if present, otherwise `navigation.altitude`, otherwise 0; rounded to a whole metre |
+| `elev_m` | `navigation.gnss.antennaAltitude` if it holds a number, otherwise `navigation.altitude`, otherwise 0; rounded to a whole metre |
 | `name`, `operator_text` | **Display Name** |
 | `station_type` | **Station Type** |
 | `operator_url` | **Operator Website URL** |
-| `share_option` | **Share Option** |
+| `share_option` | **Share Option**: `public` for **Public**, `only_windy` for **Windy only** |
 | `agl_wind`, `agl_temp` | **Wind Sensor Height** and **Temperature Sensor Height** |
 
 The two sensor heights describe how far each sensor is above the waterline. They are not the station elevation. The elevation Windy shows for the station ("AMSL") is `elev_m`, which the plugin takes from the GNSS altitude and which is normally close to zero for a vessel.
@@ -58,10 +58,10 @@ The two sensor heights describe how far each sensor is above the waterline. They
 | :--- | :--- |
 | Node.js | 20 or later (`engines` in `package.json`) |
 | Automated tests | Run on Node.js 20.20.2, 22.22.0 and 24.21.0 |
-| Signal K server | Loaded and run against Signal K server 2.33.0 |
-| Plugin CI | The [Signal K plugin CI](https://github.com/SignalK/signalk-server/blob/master/.github/workflows/plugin-ci.yml) runs on Linux, Linux arm64, macOS and Windows with Node.js 22 and 24 on every push |
+| Signal K server | Loaded and started on Signal K server 2.31.1, 2.32.0 and 2.33.0; a full reporting cycle, a server shutdown and a resume were run on 2.33.0 |
+| Plugin CI | The [Signal K plugin CI](https://github.com/SignalK/signalk-server/blob/master/.github/workflows/plugin-ci.yml) runs on every push: the tests on Linux, Linux arm64, macOS and Windows with Node.js 22 and 24, and an integration check against Signal K server 2.31.1, 2.32.0 and the latest release |
 
-Signal K server versions older than 2.33.0 have not been tested with this release. Earlier releases of the plugin were developed on Signal K server 2.21 and 2.22.
+Signal K server versions older than 2.31.1 have not been tested with this release. Earlier releases of the plugin were developed on Signal K server 2.21 and 2.22.
 
 ## Prerequisites
 
@@ -80,7 +80,7 @@ Signal K server versions older than 2.33.0 have not been tested with this releas
 3. **Install the Plugin**: In the Signal K admin UI, open **Apps & Plugins > Store**, search for `signalk-windy-apiv2`, install it, and restart the Signal K server.
 4. **Configure the Plugin**: Open **Apps & Plugins > Configuration**, select **Windy API v2 Reporter**, enter the three credentials and set the **Display Name**, which is the name shown on the Windy map.
 5. **Set Movement Guard**: Choose a distance threshold (default 300m). The station position on Windy is updated only when the vessel moves beyond this distance from the last reported point.
-6. **Check the Dashboard**: After 15 seconds the plugin status shows the reported readings and a countdown to the next report.
+6. **Check the Dashboard**: After 15 seconds the plugin status shows the reported readings and a countdown to the next report. Until all three credentials are entered, the status reads "Not configured" and nothing is sent.
 
 Users migrating from the legacy signalk-windy plugin should follow the [Migration Guide](MIGRATION.md).
 
@@ -94,11 +94,11 @@ journalctl -u signalk -f | grep "signalk-windy-apiv2"
 
 ### Restart vs Full Reset
 
-The plugin maintains persistent state in a `state.json` file within the Signal K data directory. There are two levels of reset depending on the situation.
+The plugin maintains persistent state in a `state.json` file within the Signal K data directory, saved after every reporting cycle. There are two levels of reset depending on the situation.
 
 **Restart (apply config changes):** Open **Apps & Plugins > Configuration**, select the Windy API v2 Reporter, and click **Submit**. This restarts the plugin with the current settings. The movement baseline, reporting timer, and position establishment state are preserved — only configuration changes (credentials, interval, thresholds) take effect.
 
-**Full reset (clear all state):** Delete the plugin's `state.json` file and restart. This clears the movement baseline, resets the reporting timer, and forces a fresh position update to Windy on the next reporting cycle. The state file is located at:
+**Full reset (clear all state):** Disable the plugin, delete its `state.json` file, and enable the plugin again. The plugin has to be disabled first, because a running plugin saves its state again at the next cycle and when it stops. This clears the movement baseline, resets the reporting timer, and forces a fresh position update to Windy on the next reporting cycle. The state file is located at:
 
 ```
 ~/.signalk/plugin-config-data/signalk-windy-apiv2/state.json
@@ -121,20 +121,22 @@ When sharing logs, redact the **Station Password** and **API Key** before postin
 
 **Error messages.** The messages below were checked against the Windy API on 2026-10-10.
 
-1. **"Station Password rejected by Windy"** — The Station Password is incorrect, or the Station ID does not belong to that password. Windy answers both with a message about the password. Verify both against the station detail page at [stations.windy.com](https://stations.windy.com).
-2. **"Windy rejected the API Key or Station ID (403)"** — The Global API Key is incorrect or missing. Windy now answers a Station ID that does not exist with a different code, shown as the next message.
-3. **"Metadata update failed (404)"** — The Station ID does not exist. Verify it on the station list.
-4. **"Metadata update failed (400)"** — Windy rejected the station record. The usual cause is the **Private** share option; see [Known Limitations](#known-limitations).
-5. **"Observation failed: Status 400: ..."** — Windy rejected the observation and names the field in the message. A message about `ts` means the system clock of the server is wrong: Windy accepts no time in the future and none more than two hours in the past.
+1. **"Not configured: enter ..."** — One or more of the three credentials is missing. The message names them. Nothing is sent until all three are entered.
+2. **"Station Password rejected by Windy"** — The Station Password is incorrect. Verify it against the station detail page at [stations.windy.com](https://stations.windy.com).
+3. **"Station ID and Station Password do not belong together"** — The Station ID and the Station Password are not those of the same station. Verify both against the station detail page.
+4. **"Windy rejected the Global API Key (403)"** — The Global API Key is incorrect. Verify it on the API Keys page.
+5. **"Windy does not know this Station ID (404)"** — No station has this ID. Verify it on the station list.
+6. **"Station position not updated: Share Option ..."** — The saved Share Option is one Windy does not accept, or none is saved. Observations are still sent, but the position on the map is not updated until **Public** or **Windy only** is selected. Versions before 1.5.2 offered a **Private** option, which Windy rejects.
+7. **"Metadata update failed (400)"** — Windy rejected the station record. The server log holds Windy's answer.
+8. **"Observation failed: Status 400: ..."** — Windy rejected the observation and names the field in the message. A message about `ts` means the system clock of the server is wrong: Windy accepts no time in the future and none more than two hours in the past.
+9. **"Reporting cycle failed: ..."** — An error the plugin did not foresee. The plugin reports again at the next cycle; the server log holds the details, which are worth including in a bug report.
 
 **Pressure not shown on the Windy station page.** Pressure data is transmitted correctly but may not appear in the Windy station UI. Windy displays pressure only for professional stations; for personal weather stations the value is accepted and stored (visible in the data graph) but not shown in the station inspector. This is a Windy display limitation, not a plugin issue — the data is being reported.
 
 ## Known Limitations
 
-1. **The Private share option is rejected by Windy.** Windy accepts `public` and `only_windy` only. With **Private** selected, every station update fails and the position on the map is not updated. Select **Public** or **Windy** instead.
-2. **An operator logo set on Windy is removed by position updates.** Windy replaces the whole station record on every update and offers no way to send a position alone. The plugin does not resend a logo, so a logo uploaded at [stations.windy.com](https://stations.windy.com) is removed the next time the vessel moves beyond the movement threshold.
-3. **State is saved only when the plugin is stopped from the admin UI.** The Signal K server does not stop plugins when the server itself shuts down or restarts. After a server restart, reboot or power loss the plugin continues from the state saved at the last Submit, or from a fresh state if there is none. The first reporting cycle then sends a station update if the vessel has moved, and the countdown starts again from the 15-second warm-up.
-4. **Readings are not checked for age.** A sensor path that has stopped updating keeps its last value in Signal K, and that value is reported as current.
+1. **An operator logo set on Windy is removed by position updates.** Windy replaces the whole station record on every update and offers no way to send a position alone. The plugin does not resend a logo, so a logo uploaded at [stations.windy.com](https://stations.windy.com) is removed the next time the vessel moves beyond the movement threshold.
+2. **Readings are not checked for age.** A sensor path that has stopped updating keeps its last value in Signal K, and that value is reported as current.
 
 ## Future Enhancements
 

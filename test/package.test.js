@@ -79,6 +79,24 @@ describe('package.json', () => {
     }
   })
 
+  it('publishes every file of lib/, which index.js cannot load without', () => {
+    const modules = fs.readdirSync(path.join(root, 'lib')).filter((name) => name.endsWith('.js'))
+    assert.ok(modules.length > 0)
+    for (const name of modules) {
+      assert.ok(isPublished(`lib/${name}`), `lib/${name} is not in the files list`)
+    }
+    // Every module index.js asks for exists.
+    for (const [, required] of source.matchAll(/require\('(\.\/lib\/[^']+)'\)/g)) {
+      assert.ok(fs.existsSync(path.join(root, `${required}.js`)), `${required}.js does not exist`)
+    }
+  })
+
+  it('keeps the integration check out of the published package and out of npm test', () => {
+    assert.equal(pkg.scripts['test:integration'], 'node integration/server-check.js')
+    assert.ok(fs.existsSync(path.join(root, 'integration', 'server-check.js')))
+    assert.ok(!isPublished('integration/server-check.js'))
+  })
+
   it('carries the same version as the header of index.js', () => {
     const header = source.match(/^ \* v(\d+\.\d+\.\d+) - /m)
     assert.ok(header, 'index.js has no version line in its header')

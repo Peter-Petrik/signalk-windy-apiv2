@@ -48,7 +48,7 @@ describe('unit conversion', () => {
 
   it('converts humidity from a ratio to a percentage', async () => {
     const tree = fullTree()
-    tree.environment.outside.relativeHumidity.value = 0.726
+    tree.environment.outside.humidity.value = 0.726
     assert.equal((await observationFor(tree)).rh, '73')
   })
 
@@ -75,7 +75,7 @@ describe('missing values', () => {
 
   it('leaves out a parameter whose path is absent', async () => {
     const tree = fullTree()
-    delete tree.environment.outside.relativeHumidity
+    delete tree.environment.outside.humidity
     delete tree.environment.outside.pressure
     const params = await observationFor(tree)
     assert.ok(!('rh' in params))

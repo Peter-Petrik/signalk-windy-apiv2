@@ -4,13 +4,15 @@
 # It calls the shared SignalK workflow which tests the plugin
 # across Linux, Linux arm64, macOS, and Windows (Node 22 + 24).
 #
-# The Signal K integration test is switched off for automatic runs.
-# That job starts a real Signal K server with sample data and
-# enables the plugin with an empty configuration. This plugin
-# would then send a station update and an observation without
-# credentials to Windy from every CI run. The job is to be
-# switched on once the plugin refuses to start without
-# credentials.
+# The Signal K integration test starts a real Signal K server with
+# sample data, installs the plugin and enables it with an empty
+# configuration, then runs `npm run test:integration`. Without
+# credentials the plugin sends nothing, and the integration check
+# saves no configuration, so no CI run sends a request to Windy.
+#
+# The server versions are the current release and the two before
+# it. The two pinned versions need moving forward by hand when a
+# new server version is released.
 #
 # It can also be triggered manually from the GitHub Actions UI
 # with custom settings (Node versions, server versions).
@@ -58,7 +60,7 @@ on:
       enable-signalk-integration:
         description: Start SignalK server and install plugin for integration testing
         required: false
-        default: false
+        default: true
         type: boolean
       signalk-server-versions:
         description: 'JSON array of signalk-server versions for integration testing, e.g. ["2.23.0","latest"]'
@@ -75,7 +77,8 @@ jobs:
       test-command: npm test
       build-command: npm run build --if-present
       node-versions: '["22", "24"]'
-      enable-signalk-integration: false
+      enable-signalk-integration: true
+      signalk-server-versions: '["2.31.1", "2.32.0", "latest"]'
 
   # ── Manual runs (workflow_dispatch with custom inputs) ────
   test-plugin-manual:

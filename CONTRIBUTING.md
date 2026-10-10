@@ -23,9 +23,15 @@ The plugin is plain JavaScript with no build step and one runtime dependency, `a
 
 | Path | Contents |
 | :--- | :--- |
-| `index.js` | The plugin: configuration form, subscriptions, movement guard, the two requests to Windy, scheduling and state. |
+| `index.js` | The plugin's lifecycle and schedule: start, stop, subscriptions, the countdown, and the order of the two requests in a reporting cycle. |
+| `lib/schema.js` | The configuration form, and the reading of a saved configuration with its defaults. |
+| `lib/convert.js` | Signal K values to observation fields: unit conversion, the gust rule, range checks. |
+| `lib/movement.js` | Distance from the last position sent to Windy. |
+| `lib/state.js` | Loading and saving `state.json`. |
+| `lib/windy.js` | The two requests to Windy and the meaning of each answer. |
 | `test/` | Automated tests. |
 | `test-support/harness.js` | The mock Signal K `app` object, the interception of the two requests, and the controlled clock that the tests share. |
+| `integration/server-check.js` | A check against a running Signal K server, run by the plugin CI. |
 | `.github/workflows/signalk-ci.yml` | Runs the Signal K plugin CI on every push. |
 | `.github/workflows/publish.yml` | Publishes a tagged version to npm and creates the GitHub Release. |
 
@@ -59,12 +65,23 @@ The tests drive the plugin the way the Signal K server does: through the `app` o
 | :--- | :--- |
 | `test/reporting.test.js` | What is sent, in which order and when; the movement guard |
 | `test/conversions.test.js` | Unit conversion, missing values, the gust rule, path overrides |
+| `test/robustness.test.js` | Values that are not numbers, out-of-range readings, positions without coordinates, a cycle that fails |
+| `test/settings.test.js` | Zero values, defaults without the form, the share option, the humidity path |
+| `test/lifecycle.test.js` | Starting without credentials, stopping during a request, release of subscriptions |
 | `test/errors.test.js` | Rate limits, rejected requests, network errors, dashboard messages |
 | `test/state.test.js` | The state file and restarts |
 | `test/schema.test.js` | The configuration form |
 | `test/package.test.js` | App Store metadata in `package.json` and the format of `CHANGELOG.md` |
 
 A change in behaviour needs a test that fails without it.
+
+### Integration Check
+
+```bash
+SIGNALK_URL=http://localhost:3000 npm run test:integration
+```
+
+This runs `integration/server-check.js` against a running Signal K server that has the plugin installed and enabled with an empty configuration. It confirms that the server loads the plugin and that the plugin reports itself as not configured. The plugin CI runs it against a real server on every push. The check saves no configuration and must stay that way: with credentials the plugin sends requests to Windy.
 
 ## Pull Requests
 

@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.5.1 - App Store metadata, automated tests, plugin CI; no change in behaviour
+ * v1.5.2 - Reporting survives bad data, a stopped plugin stays stopped, state is saved after every cycle
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -22,598 +22,371 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
+/*
+ * This file holds the plugin's lifecycle and its schedule: start, stop, the
+ * countdown, and the order of the two requests in one reporting cycle. The
+ * parts with no notion of time live in lib/:
+ *
+ *   lib/schema.js    the configuration form and the reading of saved settings
+ *   lib/convert.js   Signal K values to observation fields, with range checks
+ *   lib/movement.js  distance from the last position sent to Windy
+ *   lib/state.js     loading and saving state.json
+ *   lib/windy.js     the two requests and the meaning of Windy's answers
+ */
+
+'use strict'
+
+const path = require('node:path')
+
+const { schema, uiSchema, resolveOptions } = require('./lib/schema')
+const { buildObservation, dashboardText, isNumber, inRange } = require('./lib/convert')
+const { isValidPosition, distanceMeters } = require('./lib/movement')
+const { loadState, saveState } = require('./lib/state')
+const windy = require('./lib/windy')
+
+// Signal K needs a moment after a start to receive its first sensor values.
+const WARM_UP_MS = 15000
 
 module.exports = function (app) {
-  let timer = null;
-  let statusTimer = null; // Variable for the live countdown heartbeat
-  let lastSentPos = { lat: 0, lon: 0 };
-  let currentDistance = 0;
-  let nextRunTime = 0;
-  let kx = 1; // Latitude scaling factor for Equirectangular projection (Cheap Ruler)
-  let lastReportString = ''; // Persistent storage for the last submitted data string
+  // Everything that belongs to one run of the plugin, from start() to stop().
+  // null while the plugin is stopped or not configured.
+  //
+  // A new object is created on every start. Each timer and each request holds
+  // on to the session it was started in and checks `session.active` before it
+  // does anything further. That is what makes stop() final: a request that is
+  // still on its way to Windy when the plugin is stopped comes back to a
+  // session that is no longer active, and neither reschedules the cycle nor
+  // touches the dashboard.
+  let session = null
 
-  // Tracks whether the plugin has ever successfully sent a position update (PUT) to
-  // Windy since state was last initialized. When false, the first reporting cycle
-  // forces a PUT regardless of the movement guard — ensuring the station appears at
-  // the correct location on Windy after a fresh install, migration, or state reset.
-  // Persisted in state.json so it survives server restarts.
-  let hasReportedPosition = false;
+  // Kept across a restart of the plugin, so that the dashboard goes on showing
+  // the last report while the countdown to the next one runs.
+  let lastReportString = ''
 
-  // Peak Gust Tracking Variables
-  let peakGust = 0;
+  const plugin = {}
+  plugin.id = 'signalk-windy-apiv2'
+  plugin.name = 'Windy API v2 Reporter'
+  plugin.description = 'Reports weather and position data to Windy.com API v2'
+  plugin.schema = schema
+  plugin.uiSchema = uiSchema
 
-  const plugin = {};
-  plugin.id = 'signalk-windy-apiv2';
-  plugin.name = 'Windy API v2 Reporter';
-  plugin.description = 'Reports weather and position data to Windy.com API v2';
+  // Resolved on use and not at load time: the data directory is known to the
+  // app object only once the server has set the plugin up.
+  const stateFile = () => path.join(app.getDataDirPath(), 'state.json')
 
-  // Helper to safely get the state file path only when the app object is ready
-  const getStateFilePath = () => {
-    const dataDir = app.getDataDirPath();
-    return path.join(dataDir, 'state.json');
-  };
+  /** Saves the state of a session. A failure is logged and never thrown. */
+  const persist = (s) => {
+    try {
+      saveState(stateFile(), s.state)
+    } catch (err) {
+      app.error(`Failed to save state file: ${err.message}`)
+    }
+  }
 
   /**
-   * Heartbeat: Updates the Signal K Dashboard status with a live countdown.
+   * Heartbeat: updates the dashboard status once a second with a countdown.
    * Format: "Next: XmXXs | Δ###m | W:## G:## D:### T:## P:### H:## | HH:MM"
-   * Ordered by time-sensitivity: countdown first, sensor data in middle,
-   * timestamp last (degrades gracefully if dashboard truncates).
+   * Ordered by time-sensitivity: countdown first, sensor data in the middle,
+   * time of the last report at the end, where a narrow dashboard cuts it off
+   * first.
    */
-  const updateHeartbeatStatus = (msgPrefix = 'Next') => {
-    const remainingMs = nextRunTime - Date.now();
-    if (remainingMs > 0) {
-      const min = Math.floor(remainingMs / 60000);
-      const sec = Math.floor((remainingMs % 60000) / 1000);
-      
-      // Build compact status: countdown and distance from baseline first
-      const heartbeat = `${msgPrefix}: ${min}m${sec < 10 ? '0' : ''}${sec}s`;
-      const movement = `\u0394${Math.round(currentDistance)}m`;
-      
-      // Append last sensor data and timestamp if available (truncation-safe at the end)
-      const status = lastReportString 
-        ? `${heartbeat} | ${movement} | ${lastReportString}`
-        : `${heartbeat} | ${movement}`;
-        
-      app.setPluginStatus(status);
-    }
-  };
+  const updateHeartbeatStatus = (s, label) => {
+    if (!s.active) return
+    const remainingMs = s.state.nextRunTime - Date.now()
+    if (remainingMs <= 0) return
 
-  plugin.schema = {
-    type: 'object',
-    required: ['credentials'],
-    properties: {
-      credentials: {
-        title: 'Windy API Credentials',
-        type: 'object',
-        description: 'Authentication requirements for the Windy.com Stations dashboard.',
-        required: ['stationId', 'stationPassword', 'apiKey'],
-        properties: {
-          stationId: { 
-            type: 'string', 
-            title: 'Station ID',
-            description: 'The unique identifier assigned during station registration (e.g., f0123456).'
-          },
-          stationPassword: { 
-            type: 'string', 
-            title: 'Station Password',
-            description: 'The secret password assigned to the station.'
-          },
-          apiKey: { 
-            type: 'string', 
-            title: 'Global API Key',
-            description: 'The global API key found in Windy account settings.' 
-          }
-        }
-      },
-      identity: {
-        title: 'Vessel Identity & Sensors',
-        type: 'object',
-        properties: {
-          stationName: { 
-            type: 'string', 
-            title: 'Display Name', 
-            default: 'Signal K Vessel',
-            description: 'The name visible on the Windy map.'
-          },
-          station_type: { 
-            type: 'string', 
-            title: 'Station Type', 
-            default: 'Boat (Signal K)',
-            description: 'The category assigned to the reporting station.'
-          },
-          operator_url: { 
-            type: 'string', 
-            title: 'Operator Website URL',
-            description: 'A public link displayed on the Windy station page.'
-          },
-          shareOption: {
-            type: 'string',
-            title: 'Share Option',
-            default: 'public',
-            enum: ['public', 'only_windy', 'private'],
-            enumNames: [
-              'Public', 
-              'Windy',
-              'Private'
-            ]
-          },
-          agl_temp: {
-            type: 'integer', // Windy rejects a sensor height that is not a whole number
-            title: 'Temperature Sensor Height (m)',
-            default: 2,
-            description: 'Height of the thermometer above the water line (AGL). Must be a whole number.'
-          },
-          agl_wind: {
-            type: 'integer', // Windy rejects a sensor height that is not a whole number
-            title: 'Wind Sensor Height (m)',
-            default: 10,
-            description: 'Height of the anemometer above the water line (AGL). Must be a whole number.'
-          }
-        }
-      },
-      logic: {
-        title: 'Transmission & Movement Guard',
-        type: 'object',
-        properties: {
-          interval: { 
-            type: 'number', 
-            title: 'Reporting Interval (Minutes)', 
-            default: 5,
-            minimum: 5,
-            description: 'Minimum 5 minutes. Windy enforces a rate limit of one observation per 5 minutes per station.'
-          },
-          minMove: { 
-            type: 'number', 
-            title: 'Min Movement Threshold (Meters)', 
-            default: 300,
-            description: 'The distance required for a GPS position update on the Windy map.'
-          },
-          forceUpdate: { 
-            type: 'boolean', 
-            title: 'Force GPS Updates', 
-            default: false
-          }
-        }
-      },
-      pathMap: {
-        title: 'Sensor Path Overrides (Advanced)',
-        type: 'object',
-        properties: {
-          windSpeed: { type: 'string', title: 'Wind Speed', default: 'environment.wind.speedOverGround' },
-          windGust: { type: 'string', title: 'Wind Gust', default: 'environment.wind.gust' },
-          windDir: { type: 'string', title: 'Wind Direction', default: 'environment.wind.directionTrue' },
-          temp: { type: 'string', title: 'Outside Temp', default: 'environment.outside.temperature' },
-          pressure: { type: 'string', title: 'Barometric Pressure', default: 'environment.outside.pressure' },
-          humidity: { type: 'string', title: 'Relative Humidity', default: 'environment.outside.relativeHumidity' }
-        }
-      }
-    }
-  };
+    const min = Math.floor(remainingMs / 60000)
+    const sec = Math.floor((remainingMs % 60000) / 1000)
+    const heartbeat = `${label}: ${min}m${sec < 10 ? '0' : ''}${sec}s`
 
-  plugin.uiSchema = {
-    credentials: { 
-      stationPassword: { "ui:widget": "password" }, 
-      apiKey: { "ui:widget": "password" } 
-    },
-    identity: {
-      shareOption: {
-       "ui:help": "Public: aggregate data under the Aggregator Open Data License; Windy: Observations used only by Windy.com; Private: Private non-public use"
-      }
-    },
-    logic: {
-      forceUpdate: {
-        "ui:help": "Bypasses the Movement Guard to send GPS coordinates at every interval."
-      }
-    },
-    pathMap: { "ui:options": { collapsible: true, collapsed: true } }
-  };
+    // While the share option stops station updates, the reason takes the
+    // place of the readings and is shown as an error. A status set as an
+    // error is replaced by the next plain status, so it has to be repeated
+    // with every heartbeat to stay visible.
+    if (s.options.shareProblem) {
+      app.setPluginError(`Station position not updated: ${s.options.shareProblem} | ${heartbeat}`)
+      return
+    }
+
+    const movement = `Δ${Math.round(s.state.currentDistance)}m`
+    app.setPluginStatus(lastReportString
+      ? `${heartbeat} | ${movement} | ${lastReportString}`
+      : `${heartbeat} | ${movement}`)
+  }
+
+  /**
+   * Arms the next reporting cycle `delayMs` from now and starts the countdown
+   * that leads up to it.
+   */
+  const schedule = (s, delayMs, label) => {
+    if (!s.active) return
+    if (s.statusTimer) clearInterval(s.statusTimer)
+    if (s.timer) clearTimeout(s.timer)
+
+    s.state.nextRunTime = Date.now() + delayMs
+    s.statusTimer = setInterval(() => updateHeartbeatStatus(s, label), 1000)
+    s.timer = setTimeout(() => runCycle(s), delayMs)
+  }
+
+  /**
+   * One reporting cycle, and whatever happens in it, the next one after it.
+   *
+   * The report is wrapped so that no error can end the loop. Before 1.5.2 a
+   * single unexpected value, such as a position without coordinates, threw
+   * inside the timer callback; the next cycle was never scheduled and the
+   * plugin stayed silent until it was restarted.
+   */
+  const runCycle = async (s) => {
+    if (!s.active) return
+    clearInterval(s.statusTimer) // the countdown has reached zero
+
+    let retryDelayMs = null
+    try {
+      retryDelayMs = await reportToWindy(s)
+    } catch (err) {
+      app.error(`Reporting cycle failed: ${err && err.stack ? err.stack : err}`)
+      if (s.active) app.setPluginError(`Reporting cycle failed: ${err && err.message ? err.message : err}`)
+    }
+
+    if (!s.active) return
+    // After a 429 the cycle is repeated at the moment Windy named, not a full
+    // interval later.
+    schedule(s, retryDelayMs || s.options.interval * 60000, 'Next')
+    persist(s)
+  }
 
   // --- LIFECYCLE ---
 
   plugin.start = function (settings) {
-    const options = { 
-      ...(settings.credentials || {}), 
-      ...(settings.identity || {}), 
-      ...(settings.logic || {}), 
-      pathMap: settings.pathMap || {} 
-    };
+    // The server stops a plugin before it starts it again. Should a start
+    // ever arrive without that stop, the earlier session must not go on
+    // running next to the new one.
+    if (session) plugin.stop()
 
-    // Load internal movement state from private file
-    // app.getDataDirPath() is safe to call inside start()
-    try {
-      const stateFile = getStateFilePath();
-      if (fs.existsSync(stateFile)) {
-        const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-        lastSentPos = state.lastSentPos || { lat: 0, lon: 0 };
-        currentDistance = state.currentDistance || 0;
-        nextRunTime = state.nextRunTime || 0;
-        hasReportedPosition = state.hasReportedPosition || false;
-        if (lastSentPos.lat) kx = Math.cos(lastSentPos.lat * Math.PI / 180);
-      }
-    } catch (e) { app.debug('Starting with fresh internal state.'); }
+    const options = resolveOptions(settings)
 
-    // --- PEAK GUST TRACKING (GAP CLOSER) ---
-    // Subscribe to navigation.position to track vessel movement for the Movement Guard
-    // Also subscribe to wind speed at 1Hz to track the highest wind speed observed between intervals
-    const windPath = options.pathMap.windSpeed || 'environment.wind.speedOverGround';
+    // Without all three credentials nothing can be accepted by Windy. Nothing
+    // is subscribed and nothing is scheduled, so no request leaves the
+    // server. This is also the state of a plugin that has been enabled but
+    // not filled in yet, and of every automated check that starts a plugin
+    // with an empty configuration.
+    if (options.missingCredentials.length > 0) {
+      app.setPluginStatus(`Not configured: enter ${options.missingCredentials.join(', ')} in the plugin configuration`)
+      return
+    }
 
+    const s = {
+      active: true,
+      options,
+      state: loadState(stateFile(), (line) => app.debug(line)),
+      timer: null,
+      statusTimer: null,
+      unsubscribes: [],
+      peakGust: 0
+    }
+    session = s
+
+    if (options.shareProblem) {
+      app.error(`Station position will not be updated: ${options.shareProblem}`)
+    }
+
+    // Two live subscriptions, once a second each: the position, for the
+    // movement guard, and the wind speed, to catch the highest value between
+    // two reports. The server appends a function to `s.unsubscribes` for each
+    // subscription; stop() calls them. Without that, every restart of the
+    // plugin left another pair of subscriptions running for the life of the
+    // server process.
+    const windPath = options.pathMap.windSpeed
     app.subscriptionmanager.subscribe({
       context: 'vessels.self',
       subscribe: [
         { path: 'navigation.position', period: 1000 },
         { path: windPath, period: 1000 }
       ]
-    }, [], (err) => app.error(err), (delta) => {
-      delta.updates.forEach(u => u.values.forEach(v => {
-        if (v.path === 'navigation.position' && v.value) handlePositionUpdate(v.value);
-
-        // Track Peak Gust
-        if (v.path === windPath && v.value !== null) {
-          if (v.value > peakGust) peakGust = v.value;
+    }, s.unsubscribes, (err) => app.error(err), (delta) => {
+      if (!s.active || !delta || !Array.isArray(delta.updates)) return
+      for (const update of delta.updates) {
+        if (!update || !Array.isArray(update.values)) continue
+        for (const v of update.values) {
+          if (!v) continue
+          if (v.path === 'navigation.position') handlePositionUpdate(s, v.value)
+          // A sample outside Windy's gust range is a sensor glitch. Taking it
+          // as the peak would cost the real peak of the interval.
+          if (v.path === windPath && isNumber(v.value) && inRange('gust', v.value) && v.value > s.peakGust) {
+            s.peakGust = v.value
+          }
         }
-      }));
-    });
+      }
+    })
 
-    // Determine if the plugin should report immediately or wait based on persisted nextRunTime
-    const remainingTime = nextRunTime - Date.now();
-    if (remainingTime <= 0) {
-      // Warm-up delay: Give Signal K 15 seconds to receive sensor data before first report
-      nextRunTime = Date.now() + 15000;
-      statusTimer = setInterval(() => updateHeartbeatStatus('Warm'), 1000);
-      
-      timer = setTimeout(async () => {
-        clearInterval(statusTimer); // Stop warm-up countdown
-        const rescheduled = await reportToWindy(options);
-        // If reportToWindy already rescheduled (e.g., 429 retry_after), don't double-schedule
-        if (!rescheduled) scheduleNext(options);
-      }, 15000);
+    // Continue the countdown that was running when the state was last saved,
+    // or begin with the warm-up when that moment has passed.
+    const intervalMs = options.interval * 60000
+    const remainingMs = s.state.nextRunTime - Date.now()
+    if (remainingMs <= 0) {
+      schedule(s, WARM_UP_MS, 'Warm')
     } else {
-      // Resuming logic with Heartbeat integration
-      statusTimer = setInterval(() => updateHeartbeatStatus('Resume'), 1000);
-      
-      timer = setTimeout(async () => { 
-        clearInterval(statusTimer);
-        const rescheduled = await reportToWindy(options); 
-        if (!rescheduled) scheduleNext(options); 
-      }, remainingTime);
+      // A saved time further away than one interval cannot be right; it comes
+      // from a state saved while the system clock was wrong. Waiting for it
+      // could keep the plugin silent for days.
+      schedule(s, Math.min(remainingMs, intervalMs), 'Resume')
     }
-  };
+  }
 
   plugin.stop = function () {
-    if (timer) clearTimeout(timer);
-    if (statusTimer) clearInterval(statusTimer); // Clear heartbeat on stop
-    
-    // Save movement state to private file (Does not touch config/settings.json)
-    try {
-      const dataDir = app.getDataDirPath();
-      const stateFile = getStateFilePath();
-      const state = { lastSentPos, currentDistance, nextRunTime, hasReportedPosition };
-      
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
-      fs.writeFileSync(stateFile, JSON.stringify(state));
-    } catch (e) { app.error('Failed to save state file:', e.message); }
+    const s = session
+    session = null
 
-    app.setPluginStatus('Stopped');
-  };
+    // A plugin that was never started, or was not configured, has loaded no
+    // state. Saving here would overwrite the real state file with an empty one.
+    if (s) {
+      s.active = false
+      if (s.timer) clearTimeout(s.timer)
+      if (s.statusTimer) clearInterval(s.statusTimer)
+      for (const unsubscribe of s.unsubscribes) {
+        try { unsubscribe() } catch (err) { app.debug(`Unsubscribe failed: ${err.message}`) }
+      }
+      s.unsubscribes.length = 0
+      persist(s)
+    }
+
+    app.setPluginStatus('Stopped')
+  }
 
   // --- ENGINE ---
 
   /**
-   * Tracks distance from the last reported (baseline) position using Cheap Ruler math.
-   * This is a radius calculation, not cumulative odometer distance.
+   * Movement guard: records how far the vessel is from the last position sent
+   * to Windy. The first usable position becomes the baseline.
    */
-  function handlePositionUpdate(pos) {
-    if (!lastSentPos.lat) {
-      lastSentPos = { lat: pos.latitude, lon: pos.longitude };
-      kx = Math.cos(pos.latitude * Math.PI / 180);
-      return;
+  function handlePositionUpdate (s, position) {
+    // A receiver without a fix can publish a position with null coordinates.
+    if (!isValidPosition(position)) return
+    if (!s.state.lastSentPos) {
+      s.state.lastSentPos = { lat: position.latitude, lon: position.longitude }
+      return
     }
-    const dx = (pos.longitude - lastSentPos.lon) * kx;
-    const dy = (pos.latitude - lastSentPos.lat);
-    currentDistance = Math.sqrt(dx * dx + dy * dy) * 111319; // Current radius in meters
+    s.state.currentDistance = distanceMeters(s.state.lastSentPos, position)
   }
 
   /**
-   * Reports data using separate endpoints as required by API v2.
-   * 
-   * A metadata PUT (station position update) is sent when any of three conditions is met:
-   *   1. options.forceUpdate is enabled — the persistent config toggle that bypasses
-   *      the movement guard on every cycle.
-   *   2. !hasReportedPosition — the plugin has never sent a successful PUT since state
-   *      was initialized. Ensures the station appears at the correct location after
-   *      a fresh install, migration from the legacy plugin, or manual state reset.
-   *   3. currentDistance >= minMove — the normal movement guard threshold is exceeded.
+   * Station elevation in whole metres: the GNSS antenna altitude where Signal
+   * K has one, otherwise 0. Windy rejects an elevation that is not a whole
+   * number.
+   */
+  function stationElevation () {
+    for (const skPath of ['navigation.gnss.antennaAltitude', 'navigation.altitude']) {
+      const node = app.getSelfPath(skPath)
+      const value = node && typeof node === 'object' ? node.value : node
+      if (isNumber(value)) return Math.round(value)
+    }
+    return 0
+  }
+
+  /**
+   * Sends one report: the station record when it is due, then the observation.
    *
-   * When a PUT is needed, it is sent before the observation GET so Windy receives
-   * weather data at the newly registered position (prevents the station from being
-   * marked offline after a location update).
-   * PUTs do not count against Windy's observation rate limit (confirmed via testing).
+   * A station update is due when any of three conditions holds:
+   *   1. Force GPS Updates is switched on.
+   *   2. No station update has succeeded yet. This places the station on the
+   *      map after a fresh install, a migration from the legacy plugin, or a
+   *      reset of the state.
+   *   3. The vessel is at least the movement threshold away from the position
+   *      last sent.
+   *
+   * The station update goes first, so that the observation that follows is
+   * shown at the new position. Station updates do not count against Windy's
+   * limit of one observation per 5 minutes.
+   *
+   * Returns the number of milliseconds to wait before repeating the cycle
+   * when Windy answered 429 and named a moment, otherwise null.
    */
-  async function reportToWindy(options) {
-    const weather = getStationData(options);
-    const pos = app.getSelfPath('navigation.position');
+  async function reportToWindy (s) {
+    const { options, state } = s
+    const debug = (line) => app.debug(line)
 
-    // Three conditions trigger a station position update (PUT):
-    // 1. Force GPS Updates config toggle — bypasses movement guard every cycle
-    // 2. First-run establishment — station has never been positioned on Windy from this state
-    // 3. Movement guard threshold — vessel has moved beyond the configured distance
-    const shouldUpdateGPS = options.forceUpdate || !hasReportedPosition || currentDistance >= (options.minMove || 300);
+    const fields = buildObservation(app, options.pathMap, s.peakGust, debug)
 
-    // GAP CLOSER: If no native gust is available, or if tracked peak is higher, use peakGust
-    if (peakGust > (weather.gust || 0)) {
-      weather.gust = peakGust.toFixed(1);
-    }
+    const positionNode = app.getSelfPath('navigation.position')
+    const position = positionNode && typeof positionNode === 'object' ? positionNode.value : undefined
 
-    // --- STEP 1: METADATA PUT (if position update conditions are met) ---
-    // Must complete before the observation GET so Windy has the correct station
-    // position when the observation arrives. Auth uses Global API Key in headers.
-    if (pos && pos.value && shouldUpdateGPS) {
-      // API v2 Requirement: elev_m must be an integer
-      // Attempt to find altitude in common Signal K paths; default to 0
-      const altitude = app.getSelfPath('navigation.gnss.antennaAltitude') || 
-                       app.getSelfPath('navigation.altitude') || { value: 0 };
+    const updateDue = options.forceUpdate || !state.hasReportedPosition || state.currentDistance >= options.minMove
 
-      // Convert selection to lowercase as required by API v2.
-      // No default is applied here; if empty, Windy will return a 400 Bad Request error.
-      const rawShare = (options.shareOption || '').toLowerCase();
-
-      const metadataPayload = {
-        name: options.stationName,
-        share_option: rawShare,
-        lat: Number(pos.value.latitude.toFixed(5)),
-        lon: Number(pos.value.longitude.toFixed(5)),
-        elev_m: Math.round(altitude.value), // Windy rejects an elevation that is not a whole number
-        agl_wind: options.agl_wind || 10,    // Windy requires at least one of the two sensor heights
-        agl_temp: options.agl_temp || 2,     // Height above the waterline, from the settings
-        station_type: options.station_type,
-        operator_text: options.stationName,
-        operator_url: options.operator_url || ''
-      };
-
-      app.debug(`Movement Guard: ${Math.round(currentDistance)}m from baseline position`);
-      app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(metadataPayload)}`);
+    // --- STEP 1: STATION UPDATE (PUT) ---
+    if (updateDue && options.shareProblem) {
+      // The owner has not chosen a share option Windy accepts. No value is
+      // chosen for them; the heartbeat keeps the reason on the dashboard.
+      app.debug(`Station update not sent: ${options.shareProblem}`)
+    } else if (updateDue && !isValidPosition(position)) {
+      app.debug('Station update not sent: navigation.position holds no usable position')
+    } else if (updateDue) {
+      const payload = windy.stationPayload(options, position, stationElevation())
+      app.debug(`Movement Guard: ${Math.round(state.currentDistance)}m from baseline position`)
+      app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(payload)}`)
 
       try {
-        await axios.put(`https://stations.windy.com/api/v2/pws/${options.stationId}`, metadataPayload, {
-          headers: { 
-            'windy-api-key': options.apiKey,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        });
-        // Reset movement guard baseline only after a successful map update
-        lastSentPos = { lat: pos.value.latitude, lon: pos.value.longitude };
-        kx = Math.cos(pos.value.latitude * Math.PI / 180);
-        currentDistance = 0;
-        // Mark that the station position has been established on Windy.
-        // Persisted to state.json so subsequent restarts do not re-trigger this path.
-        hasReportedPosition = true;
-        app.debug('Station metadata updated successfully');
+        await windy.updateStation(options, payload)
+        if (!s.active) return null
+        // The baseline moves only after Windy has accepted the new position.
+        state.lastSentPos = { lat: position.latitude, lon: position.longitude }
+        state.currentDistance = 0
+        state.hasReportedPosition = true
+        persist(s)
+        app.debug('Station metadata updated successfully')
       } catch (err) {
-        // Distinguish transient network errors from API errors using err.response.
-        // Network-level failures (DNS, TLS, timeout, socket reset) have no err.response
-        // and are expected in marine connectivity environments (Starlink handovers,
-        // cellular gaps, marina WiFi). These are logged but do not trigger the red
-        // dashboard indicator — the plugin recovers on the next cycle.
-        // API-level failures (4xx, 5xx) have err.response and indicate a genuine
-        // problem requiring attention (wrong credentials, malformed payload, etc.).
-        if (err.response) {
-          const detail = JSON.stringify(err.response.data);
-          const status = err.response.status;
-          app.error(`Windy Metadata Error (${status}): ${detail}`);
-
-          // CREDENTIAL-AWARE MESSAGING (v1.5.0):
-          // Windy returns HTTP 403 ("Forbidden resource") on the metadata PUT when the
-          // Global API Key is rejected. Confirmed via live testing — but the SAME 403 is
-          // returned whether the API Key is wrong OR the Station ID does not exist. The
-          // API does not distinguish the two, so the message names both candidates rather
-          // than guessing. Other statuses keep the generic message.
-          // Wording change only — a 403 already triggered the red indicator before this.
-          if (status === 403) {
-            app.setPluginError('Windy rejected the API Key or Station ID (403) — verify both in the plugin configuration');
-          } else {
-            app.setPluginError(`Metadata update failed (${status})`);
-          }
-        } else {
-          app.error(`Windy Metadata Error (network): ${err.message}`);
-        }
-        // Continue to observation — weather data is still valuable even if location update failed
+        if (!s.active) return null
+        const problem = windy.describeStationError(err)
+        app.error(problem.log)
+        if (problem.dashboard) app.setPluginError(problem.dashboard)
+        // The observation is still sent: weather data is worth having even
+        // when the position could not be updated.
       }
     }
 
-    // --- STEP 2: OBSERVATION GET ---
-    // Sent after the PUT so the observation lands at the station's current registered position.
-    // Auth uses the Station Password as a Bearer token in the Authorization header (v1.5.0).
-    // Previously the password was passed as a PASSWORD query parameter; moving it to a header
-    // keeps the secret out of the request URL (and any intermediary/proxy logs). Both forms
-    // are accepted by the Windy v2 API; the header form is the more defensive choice.
-    // Rate-limited to 1 per 5 minutes by Windy.
-    if (Object.keys(weather).length > 0) {
-      // Only non-secret parameters go in the query string. The station password is sent
-      // in the Authorization header below, not here.
-      const weatherParams = new URLSearchParams({
-        id: options.stationId,
-        ts: Math.floor(Date.now() / 1000),
-        ...weather
-      }).toString();
-
-      app.debug(`Windy Submission (GET): ${JSON.stringify(weather)}`);
-
-      try {
-        await axios.get(`https://stations.windy.com/api/v2/observation/update?${weatherParams}`, {
-          headers: { 'Authorization': `Bearer ${options.stationPassword}` },
-          timeout: 30000
-        });
-        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-        
-        // Compact dashboard status: no units, ordered for truncation safety.
-        // Wind values converted from m/s to knots for display only.
-        // Pressure converted from Pa to kPa (1 decimal) for display only.
-        const displayMap = [];
-        if (weather.wind) displayMap.push(`W:${(weather.wind * 1.94384).toFixed(1)}`);
-        if (weather.gust) displayMap.push(`G:${(weather.gust * 1.94384).toFixed(1)}`);
-        if (weather.winddir !== undefined) displayMap.push(`D:${weather.winddir}`);
-        if (weather.temp) displayMap.push(`T:${weather.temp}`);
-        if (weather.pressure) displayMap.push(`P:${(weather.pressure / 1000).toFixed(1)}`);
-        if (weather.rh !== undefined) displayMap.push(`H:${weather.rh}`);
-
-        // Format: "W:23.9 G:29.7 D:314 T:9.0 P:100.8 H:65 | 12:33"
-        // Sensor data and timestamp stored for heartbeat display between intervals.
-        // Timestamp last — degrades gracefully if dashboard truncates.
-        const sensorFlags = displayMap.join(' ');
-        lastReportString = `${sensorFlags} | ${time}`;
-        app.setPluginStatus(`Next: 0m00s | \u0394${Math.round(currentDistance)}m | ${lastReportString}`);
-
-        // Reset peak gust tracker after successful report
-        peakGust = 0;
-      } catch (err) {
-        // --- RATE LIMIT HANDLING ---
-        // Windy returns HTTP 429 with {"retry_after":"<ISO-8601 timestamp>"} when the
-        // observation rate limit (1 per 5 minutes per station) is exceeded. This is
-        // expected flow — not an error — especially on first cycle after restart when
-        // the plugin's timer may not be aligned with Windy's rate limit window.
-        // Parse the retry_after timestamp and reschedule precisely instead of waiting
-        // the full interval. The current observation is discarded (not queued).
-        if (err.response && err.response.status === 429) {
-          let retryDelay = null;
-          try {
-            const retryAfter = err.response.data && err.response.data.retry_after;
-            if (retryAfter) {
-              retryDelay = new Date(retryAfter).getTime() - Date.now();
-              // Sanity check: delay should be positive and no more than 10 minutes
-              if (retryDelay <= 0 || retryDelay > 600000) retryDelay = null;
-            }
-          } catch (parseErr) {
-            app.debug(`Could not parse retry_after: ${parseErr.message}`);
-          }
-
-          if (retryDelay) {
-            app.debug(`Rate limited by Windy. Retry after ${Math.ceil(retryDelay / 1000)}s (from retry_after timestamp)`);
-            // Reschedule at the exact retry_after time instead of waiting the full interval.
-            // Returns true so the caller knows not to call scheduleNext again.
-            scheduleNext(options, retryDelay);
-            return true;
-          } else {
-            // 429 received but could not parse retry_after — fall back to normal interval
-            app.debug('Rate limited by Windy (429). Could not parse retry_after, using normal interval.');
-          }
-          // Do not call setPluginError for 429 — this is expected flow, not an error condition
-          return false;
-        }
-
-        // --- ERROR CLASSIFICATION ---
-        // Errors are split into two categories based on the presence of err.response:
-        //
-        // Network-level (no err.response): DNS failures (EAI_AGAIN, ENOTFOUND),
-        // TLS handshake interruptions, connection timeouts (ETIMEDOUT), socket resets
-        // (ECONNRESET), unreachable hosts (ENETUNREACH, EHOSTUNREACH), and axios
-        // timeouts. These are expected in marine connectivity environments and
-        // self-correct on the next cycle. Logged at error level for server log
-        // visibility but do not trigger setPluginError — the dashboard stays green.
-        //
-        // API-level (has err.response): HTTP 4xx (other than 429) and 5xx responses
-        // from Windy indicating a genuine problem (bad credentials, malformed request,
-        // server error). These trigger both app.error and setPluginError for the red
-        // dashboard indicator, as they typically require user attention.
-        if (err.response) {
-          const msg = `Status ${err.response.status}: ${JSON.stringify(err.response.data)}`;
-          app.error(`Windy Observation Error: ${msg}`);
-
-          // CREDENTIAL-AWARE MESSAGING (v1.5.0):
-          // Windy returns HTTP 400 with a body like {"message":"Provided password is
-          // invalid",...} when the Station Password (Bearer token) is rejected. Confirmed
-          // via live testing — a wrong password produces a 400, NOT a 401/403, and the
-          // same response appears whether the password or the station ID is wrong (the
-          // API reports both as a password problem). Detect this case and surface a
-          // specific dashboard message naming the Station Password, so the user knows
-          // which credential to check rather than seeing a generic failure.
-          //
-          // Detection is a heuristic: a 400 whose body mentions "password" (case-
-          // insensitive). This survives minor rewording by Windy and degrades gracefully
-          // to the generic message below if they change the wording substantially.
-          // This changes only the WORDING — a 400 already triggered the red indicator
-          // before this change, so error routing is unchanged.
-          const body = err.response.data;
-          const bodyText = typeof body === 'string' ? body : JSON.stringify(body || '');
-          if (err.response.status === 400 && /password/i.test(bodyText)) {
-            app.setPluginError('Station Password rejected by Windy — verify the Station Password in the plugin configuration');
-          } else {
-            app.setPluginError(`Observation failed: ${msg}`);
-          }
-        } else {
-          app.error(`Windy Observation Error (network): ${err.message}`);
-        }
-      }
-    } else {
-      app.setPluginStatus(`Next: 0m00s | \u0394${Math.round(currentDistance)}m | Waiting for sensor data`);
+    // --- STEP 2: OBSERVATION (GET) ---
+    if (Object.keys(fields).length === 0) {
+      app.setPluginStatus(`Next: 0m00s | Δ${Math.round(state.currentDistance)}m | Waiting for sensor data`)
+      return null
     }
 
-    return false;
+    app.debug(`Windy Submission (GET): ${JSON.stringify(fields)}`)
+
+    try {
+      await windy.sendObservation(options, fields, Math.floor(Date.now() / 1000))
+      if (!s.active) return null
+
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+      lastReportString = `${dashboardText(fields)} | ${time}`
+      app.setPluginStatus(`Next: 0m00s | Δ${Math.round(state.currentDistance)}m | ${lastReportString}`)
+
+      // The peak belongs to the interval that has just been reported.
+      s.peakGust = 0
+    } catch (err) {
+      if (!s.active) return null
+      const problem = windy.describeObservationError(err, Date.now())
+
+      if (problem.kind === 'rateLimit') {
+        // Expected flow, not an error: nothing is shown on the dashboard. The
+        // observation is dropped, not queued.
+        if (problem.retryDelayMs) {
+          app.debug(`Rate limited by Windy. Retry after ${Math.ceil(problem.retryDelayMs / 1000)}s (from retry_after timestamp)`)
+          return problem.retryDelayMs
+        }
+        app.debug('Rate limited by Windy (429). Could not parse retry_after, using normal interval.')
+        return null
+      }
+
+      if (problem.kind === 'duplicate') {
+        app.debug('Windy already holds an observation with this time (409). Nothing to resend.')
+        return null
+      }
+
+      app.error(problem.log)
+      if (problem.dashboard) app.setPluginError(problem.dashboard)
+    }
+
+    return null
   }
 
-  /**
-   * Fetches weather data from Signal K and converts values to Windy-standard units.
-   * K -> °C, Ratio -> %
-   * Pressure is passed through: Signal K provides Pa and Windy API v2 expects Pa.
-   */
-  function getStationData(options) {
-    const pm = options.pathMap || {};
-    const d = {};
-    const get = (p) => app.getSelfPath(p);
-
-    const w = get(pm.windSpeed || 'environment.wind.speedOverGround');
-    if (w && w.value !== null) d.wind = w.value.toFixed(1);
-
-    const g = get(pm.windGust || 'environment.wind.gust');
-    if (g && g.value !== null) d.gust = g.value.toFixed(1);
-
-    const dr = get(pm.windDir || 'environment.wind.directionTrue');
-    // Modulo 360 prevents the value 360 from being submitted when the Signal K radian
-    // value is at or very near 2π (due north). Windy's validator accepts 0–359 only —
-    // a raw Math.round() can produce exactly 360, triggering a 400 Bad Request.
-    if (dr && dr.value !== null) d.winddir = Math.round((dr.value * 180) / Math.PI) % 360;
-
-    const t = get(pm.temp || 'environment.outside.temperature');
-    if (t && t.value !== null) d.temp = (t.value - 273.15).toFixed(1);
-
-    const p = get(pm.pressure || 'environment.outside.pressure');
-    if (p && p.value !== null) d.pressure = Math.round(p.value);
-
-    const h = get(pm.humidity || 'environment.outside.relativeHumidity');
-    if (h && h.value !== null) d.rh = Math.round(h.value * 100);
-
-    return d;
-  }
-
-  /**
-   * Schedules the next reporting cycle. By default uses the configured interval.
-   * When overrideMs is provided (e.g., from a 429 retry_after response), that
-   * delay is used instead — allowing precise rescheduling to Windy's rate limit window.
-   */
-  function scheduleNext(options, overrideMs = null) {
-    const interval = overrideMs || (options.interval || 5) * 60000;
-    nextRunTime = Date.now() + interval;
-
-    // Start countdown heartbeat for the new interval
-    if (statusTimer) clearInterval(statusTimer);
-    statusTimer = setInterval(() => updateHeartbeatStatus(), 1000);
-
-    // Clear any existing timer before scheduling (important for 429 reschedule path
-    // where scheduleNext is called from within reportToWindy's catch block)
-    if (timer) clearTimeout(timer);
-
-    timer = setTimeout(async () => { 
-      clearInterval(statusTimer); // Stop countdown before reporting
-      const rescheduled = await reportToWindy(options); 
-      // If reportToWindy already rescheduled (e.g., 429 retry_after), don't double-schedule
-      if (!rescheduled) scheduleNext(options); 
-    }, interval);
-  }
-
-  return plugin;
-};
+  return plugin
+}

@@ -81,6 +81,34 @@ describe('rate limit (HTTP 429)', () => {
   })
 })
 
+describe('duplicate observation (HTTP 409)', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('shows no error and logs none, because Windy already holds the observation', async () => {
+    const env = createEnv()
+    env.get = async () => { throw httpError(409, { statusCode: 409 }) }
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.deepEqual(env.errors, [])
+    assert.deepEqual(env.errorLines, [])
+    assert.ok(env.debugLines.some((line) => line.includes('(409)')))
+    env.plugin.stop()
+  })
+
+  it('reports again at the normal interval', async () => {
+    const env = createEnv()
+    env.get = async () => { throw httpError(409, {}) }
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    await advance(FIVE_MINUTES_MS - 1)
+    assert.equal(env.gets().length, 1)
+    await advance(1)
+    assert.equal(env.gets().length, 2)
+    env.plugin.stop()
+  })
+})
+
 describe('observation rejected', () => {
   beforeEach(setUp)
   afterEach(tearDown)
@@ -91,6 +119,15 @@ describe('observation rejected', () => {
     env.plugin.start(config())
     await advance(WARM_UP_MS)
     assert.deepEqual(env.errors, ['Station Password rejected by Windy — verify the Station Password in the plugin configuration'])
+    env.plugin.stop()
+  })
+
+  it('names both the Station ID and the Station Password when Windy says they do not match', async () => {
+    const env = createEnv()
+    env.get = async () => { throw httpError(400, { message: 'Provided password does not match with station id', error: 'Bad Request', statusCode: 400 }) }
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.deepEqual(env.errors, ['Station ID and Station Password do not belong together — verify both in the plugin configuration'])
     env.plugin.stop()
   })
 
@@ -133,21 +170,32 @@ describe('station update rejected', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 
-  it('names the API Key and Station ID when Windy answers 403', async () => {
+  // The three answers below are the ones the live API gave on 2026-10-10.
+
+  it('names the Global API Key when Windy answers 403', async () => {
     const env = createEnv()
     env.put = async () => { throw httpError(403, { message: 'Forbidden resource', error: 'Forbidden', statusCode: 403 }) }
     env.plugin.start(config())
     await advance(WARM_UP_MS)
-    assert.deepEqual(env.errors, ['Windy rejected the API Key or Station ID (403) — verify both in the plugin configuration'])
+    assert.deepEqual(env.errors, ['Windy rejected the Global API Key (403) — verify the Global API Key in the plugin configuration'])
+    env.plugin.stop()
+  })
+
+  it('names the Station ID when Windy answers 404', async () => {
+    const env = createEnv()
+    env.put = async () => { throw httpError(404, { message: 'PWS not found', error: 'Not Found', statusCode: 404 }) }
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.deepEqual(env.errors, ['Windy does not know this Station ID (404) — verify the Station ID in the plugin configuration'])
     env.plugin.stop()
   })
 
   it('shows the status for any other rejection', async () => {
     const env = createEnv()
-    env.put = async () => { throw httpError(404, { message: 'PWS not found', error: 'Not Found', statusCode: 404 }) }
+    env.put = async () => { throw httpError(400, { message: ['elev_m must be an integer number'], error: 'Bad Request', statusCode: 400 }) }
     env.plugin.start(config())
     await advance(WARM_UP_MS)
-    assert.deepEqual(env.errors, ['Metadata update failed (404)'])
+    assert.deepEqual(env.errors, ['Metadata update failed (400)'])
     env.plugin.stop()
   })
 

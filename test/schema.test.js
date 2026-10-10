@@ -46,12 +46,18 @@ describe('configuration schema', () => {
     assert.equal(sections.logic.properties.forceUpdate.default, false)
   })
 
-  it('offers the two share options Windy accepts and defaults to public', () => {
+  it('offers exactly the two share options Windy accepts and defaults to public', () => {
     const share = sections.identity.properties.shareOption
-    assert.ok(share.enum.includes('public'))
-    assert.ok(share.enum.includes('only_windy'))
+    // Windy answers 400 to any other value, `private` included.
+    assert.deepEqual(share.enum, ['public', 'only_windy'])
+    assert.deepEqual(share.enumNames, ['Public', 'Windy only'])
     assert.equal(share.default, 'public')
-    assert.equal(share.enumNames.length, share.enum.length)
+  })
+
+  it('accepts zero for the sensor heights and for the movement threshold', () => {
+    assert.equal(sections.identity.properties.agl_wind.minimum, 0)
+    assert.equal(sections.identity.properties.agl_temp.minimum, 0)
+    assert.equal(sections.logic.properties.minMove.minimum, 0)
   })
 
   it('takes sensor heights as whole numbers, as Windy requires', () => {
@@ -67,7 +73,7 @@ describe('configuration schema', () => {
       windDir: 'environment.wind.directionTrue',
       temp: 'environment.outside.temperature',
       pressure: 'environment.outside.pressure',
-      humidity: 'environment.outside.relativeHumidity'
+      humidity: 'environment.outside.humidity'
     })
   })
 

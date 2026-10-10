@@ -5,6 +5,33 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-10-10
+
+### Added
+- **"Not configured" Status**: A plugin that is enabled before its credentials are entered now shows "Not configured" on the dashboard, names the credentials that are missing, and sends nothing. Before, it sent a station update and an observation without credentials every cycle and showed the resulting credential error.
+- **Integration Check in CI**: The Signal K plugin CI now also installs the plugin into a running Signal K server and runs `npm run test:integration`, which confirms that the server loads the plugin and that the plugin reports itself as not configured. The check saves no configuration, so no CI run sends a request to Windy.
+
+### Changed
+- **Default Humidity Path**: The default path for humidity is now `environment.outside.humidity`, the path in the Signal K specification and the one Signal K's NMEA 0183 and NMEA 2000 converters publish. When the configured path is that one or the earlier default `environment.outside.relativeHumidity` and holds no value, the other of the two is read. Humidity from a standard instrument is now reported without a path override, and an installation that reported humidity before continues to do so. No reconfiguration is required.
+- **Error Messages Follow Windy's Current Answers**: The dashboard messages were rechecked against the live API on 2026-10-10. A 403 on the station update now names the Global API Key only, because Windy answers an unknown Station ID with 404, which has its own message naming the Station ID. A 400 on the observation saying that the password does not match the station now names both the Station ID and the Station Password. A 409, which Windy sends for an observation it already holds, is no longer shown as an error.
+- **Share Option Label**: The option that sends `only_windy` is now labelled "Windy only" instead of "Windy".
+- **Credentials Are Trimmed**: White space around the Station ID, the Station Password and the Global API Key is removed before they are used, so a space or line break picked up while copying a key no longer causes a rejection.
+- **Source Layout**: The code is split into `index.js` (start, stop and the schedule) and five modules under `lib/` (settings, conversion, movement, state, and the requests to Windy). The split is internal and changes nothing for a running installation.
+
+### Removed
+- **Private Share Option**: The **Private** choice has been removed from the Share Option setting. Windy accepts `public` and `only_windy` only and answered every station update carrying `private` with a 400, so with Private selected the position on the map was never updated while observations were still sent; the option did not make a station private. **An installation that has Private saved keeps behaving as before**: no station update is sent and observations continue. The difference is that the dashboard now shows the reason as an error ("Share Option "Private" is not accepted by Windy. Choose Public or Windy only in the plugin configuration.") until one of the two accepted options is chosen. The plugin does not choose one on the owner's behalf. The same applies to a configuration that holds no share option at all.
+
+### Fixed
+- **Reporting Stopped After One Unexpected Value**: A position without coordinates at the moment a station update was due, or a sensor path holding something other than a number, raised an error inside the reporting cycle. The next cycle was never scheduled and the plugin stayed silent, with a frozen dashboard, until it was restarted. Every reading is now checked before use, and an error in a cycle is logged, shown on the dashboard and followed by the next cycle.
+- **Out-of-Range Readings Rejected the Whole Observation**: Windy rejects an observation when one field lies outside its documented range, for example humidity published as a percentage instead of a ratio, or pressure in hectopascal instead of pascal. Such a reading is now left out and named in the debug log, and the remaining readings are reported. A negative wind direction is folded into 0 to 359.
+- **A Stopped Plugin Kept Reporting**: When the plugin was stopped or disabled while a request to Windy was in progress, the request's completion scheduled the next cycle, and the plugin went on sending observations until the server was restarted. Stopping is now final.
+- **Subscriptions Were Never Released**: Every restart of the plugin, including every Submit in its configuration, left another pair of once-a-second subscriptions running for the life of the server process. They are now released when the plugin stops.
+- **State Was Saved Only When the Plugin Was Stopped From the Admin UI**: The Signal K server does not stop plugins when the server itself shuts down or restarts, so after a reboot or a power loss the plugin resumed from whatever state the last Submit had saved, possibly months earlier. The state is now saved after every reporting cycle and after every successful station update. The file is written under a temporary name and renamed, so an interrupted write cannot leave a damaged file.
+- **A Saved Schedule Could Silence the Plugin**: A state saved while the system clock was wrong could name a next report days away, and the plugin waited for it. A start now never waits longer than one reporting interval.
+- **Zero Was Replaced by the Default**: A sensor height of 0 was sent as 10 (wind) or 2 (temperature), and a movement threshold of 0 behaved as 300. Zero is now honoured: a height of 0 is sent as 0, and a threshold of 0 updates the position at every report.
+- **Distance Errors at the Edges**: A position without coordinates was measured as millions of metres from the baseline and triggered a station update, as did a small move across the 180° meridian. A position on the equator was not accepted as a baseline. All three are handled.
+- **Reporting Faster Than Windy Allows**: A reporting interval below 5 minutes in a configuration file, which the form does not allow, is now raised to 5.
+
 ## [1.5.1] - 2026-10-10
 
 ### Added
@@ -246,7 +273,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.2...v1.4.0

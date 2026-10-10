@@ -69,7 +69,7 @@ function fullTree () {
       outside: {
         temperature: { value: 293.15 },
         pressure: { value: 101325 },
-        relativeHumidity: { value: 0.65 }
+        humidity: { value: 0.65 }
       }
     }
   }
@@ -110,7 +110,9 @@ function createEnv (options = {}) {
     errors: [],
     debugLines: [],
     errorLines: [],
+    // Subscriptions that are still live; a released one is removed.
     subscriptions: [],
+    subscribeCalls: 0,
     put: options.put || (async () => ({ status: 200, data: {} })),
     get: options.get || (async () => ({ status: 200, data: {} }))
   }
@@ -141,8 +143,16 @@ function createEnv (options = {}) {
     debug: (message) => env.debugLines.push(String(message)),
     error: (...parts) => env.errorLines.push(parts.join(' ')),
     subscriptionmanager: {
+      // As on the server: the caller's array receives one function per
+      // subscription, and calling it ends that subscription.
       subscribe: (command, unsubscribes, errorCallback, callback) => {
-        env.subscriptions.push({ command, callback })
+        const subscription = { command, callback }
+        env.subscriptions.push(subscription)
+        env.subscribeCalls++
+        unsubscribes.push(() => {
+          const index = env.subscriptions.indexOf(subscription)
+          if (index !== -1) env.subscriptions.splice(index, 1)
+        })
       }
     }
   }
@@ -161,6 +171,19 @@ function createEnv (options = {}) {
   env.lastStatus = () => env.statuses[env.statuses.length - 1]
 
   return env
+}
+
+/**
+ * A request that stays unanswered until the test answers it. Used to stop the
+ * plugin while a request is on its way to Windy.
+ */
+function deferred () {
+  const handle = {}
+  handle.promise = new Promise((resolve, reject) => {
+    handle.resolve = () => resolve({ status: 200, data: {} })
+    handle.reject = reject
+  })
+  return handle
 }
 
 /** Lets every pending promise callback run. */
@@ -212,6 +235,7 @@ module.exports = {
   httpError,
   networkError,
   createEnv,
+  deferred,
   advance,
   settle,
   setUp,

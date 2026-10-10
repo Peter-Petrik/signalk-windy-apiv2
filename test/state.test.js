@@ -1,7 +1,7 @@
 'use strict'
 
 /*
- * The state file: what is saved when the plugin stops, and how a saved state
+ * The state file: when it is saved, what it holds, and how a saved state
  * changes the next start.
  */
 
@@ -10,7 +10,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const {
   START_TIME, WARM_UP_MS, FIVE_MINUTES_MS,
-  config, createEnv, advance, setUp, tearDown
+  config, createEnv, deferred, advance, settle, setUp, tearDown
 } = require('../test-support/harness')
 
 const readState = (env) => JSON.parse(fs.readFileSync(env.stateFile, 'utf8'))
@@ -33,13 +33,61 @@ describe('saving state', () => {
     assert.equal(state.hasReportedPosition, true)
   })
 
-  it('does not write the state file while the plugin is running', async () => {
+  it('writes the state file after every cycle, without waiting for the plugin to be stopped', async () => {
+    // The Signal K server does not stop its plugins when the server itself
+    // shuts down, so a state saved only in stop() is lost on every reboot.
     const env = createEnv()
     env.plugin.start(config())
     await advance(WARM_UP_MS)
+    let state = readState(env)
+    assert.deepEqual(state.lastSentPos, { lat: 37.5, lon: 23.4 })
+    assert.equal(state.hasReportedPosition, true)
+    assert.equal(state.nextRunTime, START_TIME + WARM_UP_MS + FIVE_MINUTES_MS)
     await advance(FIVE_MINUTES_MS)
-    assert.equal(fs.existsSync(env.stateFile), false)
+    state = readState(env)
+    assert.equal(state.nextRunTime, START_TIME + WARM_UP_MS + 2 * FIVE_MINUTES_MS)
     env.plugin.stop()
+  })
+
+  it('saves the new baseline as soon as a station update succeeds, before the observation is answered', async () => {
+    // The observation can take up to 30 seconds to time out. A power cut in
+    // that time must not cost the record of a position Windy has accepted.
+    const env = createEnv()
+    const observation = deferred()
+    env.get = () => observation.promise
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.deepEqual(env.requests.map((r) => r.method), ['PUT', 'GET'])
+    const state = readState(env)
+    assert.deepEqual(state.lastSentPos, { lat: 37.5, lon: 23.4 })
+    assert.equal(state.hasReportedPosition, true)
+    observation.resolve()
+    await settle()
+    env.plugin.stop()
+  })
+
+  it('leaves no temporary file behind', async () => {
+    const env = createEnv()
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    env.plugin.stop()
+    assert.deepEqual(fs.readdirSync(env.dataDir), ['state.json'])
+  })
+
+  it('does not write a state file when the plugin is stopped without having been started', () => {
+    const env = createEnv()
+    env.plugin.stop()
+    assert.equal(fs.existsSync(env.stateFile), false)
+    assert.equal(env.lastStatus(), 'Stopped')
+  })
+
+  it('does not overwrite a saved state when a plugin without credentials is stopped', () => {
+    const env = createEnv()
+    const saved = { lastSentPos: { lat: 37.5, lon: 23.4 }, currentDistance: 12, nextRunTime: START_TIME + 60000, hasReportedPosition: true }
+    writeState(env, saved)
+    env.plugin.start({})
+    env.plugin.stop()
+    assert.deepEqual(readState(env), saved)
   })
 
   it('sets the status to Stopped', async () => {
@@ -113,7 +161,42 @@ describe('starting from a saved state', () => {
     env.plugin.start(config())
     await advance(WARM_UP_MS)
     assert.deepEqual(env.requests.map((r) => r.method), ['PUT', 'GET'])
-    assert.ok(env.debugLines.includes('Starting with fresh internal state.'))
+    assert.ok(env.debugLines.some((line) => line.startsWith('Starting with fresh internal state')))
+    env.plugin.stop()
+  })
+
+  it('starts fresh when the state file holds something other than a state', async () => {
+    for (const content of ['null', '[]', '"text"', '{"lastSentPos":"here","currentDistance":"far","nextRunTime":"soon","hasReportedPosition":"yes"}']) {
+      const env = createEnv()
+      writeState(env, content)
+      env.plugin.start(config())
+      await advance(WARM_UP_MS)
+      assert.deepEqual(env.requests.map((r) => r.method), ['PUT', 'GET'], `state file content: ${content}`)
+      env.plugin.stop()
+    }
+  })
+
+  it('never waits longer than one interval for a saved schedule', async () => {
+    // A state saved while the system clock was wrong can name a time days away.
+    const env = createEnv()
+    writeState(env, { lastSentPos: { lat: 37.5, lon: 23.4 }, currentDistance: 0, nextRunTime: START_TIME + 10 * 24 * 3600 * 1000, hasReportedPosition: true })
+    env.plugin.start(config())
+    await advance(1000)
+    assert.match(env.lastStatus(), /^Resume: 4m59s/)
+    await advance(FIVE_MINUTES_MS - 1000)
+    assert.equal(env.gets().length, 1)
+    env.plugin.stop()
+  })
+
+  it('reads the "no position yet" marker of earlier versions', async () => {
+    // Versions before 1.5.2 saved { lat: 0, lon: 0 } before any position was sent.
+    const env = createEnv()
+    writeState(env, { lastSentPos: { lat: 0, lon: 0 }, currentDistance: 0, nextRunTime: 0, hasReportedPosition: true })
+    env.plugin.start(config())
+    env.emit('navigation.position', { latitude: 37.5, longitude: 23.4 })
+    await advance(1000)
+    // The first position becomes the baseline; it is not measured from 0, 0.
+    assert.match(env.lastStatus(), /Δ0m/)
     env.plugin.stop()
   })
 
