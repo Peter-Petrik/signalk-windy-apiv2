@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.5.0 - Bearer-token auth for observations, credential-aware error messages
+ * v1.5.1 - App Store metadata, automated tests, plugin CI; no change in behaviour
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -141,13 +141,13 @@ module.exports = function (app) {
             ]
           },
           agl_temp: {
-            type: 'integer', // Changed from 'number' to 'integer'
+            type: 'integer', // Windy rejects a sensor height that is not a whole number
             title: 'Temperature Sensor Height (m)',
             default: 2,
             description: 'Height of the thermometer above the water line (AGL). Must be a whole number.'
           },
           agl_wind: {
-            type: 'integer', // Changed from 'number' to 'integer'
+            type: 'integer', // Windy rejects a sensor height that is not a whole number
             title: 'Wind Sensor Height (m)',
             default: 10,
             description: 'Height of the anemometer above the water line (AGL). Must be a whole number.'
@@ -367,9 +367,9 @@ module.exports = function (app) {
         share_option: rawShare,
         lat: Number(pos.value.latitude.toFixed(5)),
         lon: Number(pos.value.longitude.toFixed(5)),
-        elev_m: Math.round(altitude.value), // Round to nearest integer per API error
-        agl_wind: options.agl_wind || 10,    // Height from settings (AGL requirement)
-        agl_temp: options.agl_temp || 2,     // Height from settings (AGL requirement)
+        elev_m: Math.round(altitude.value), // Windy rejects an elevation that is not a whole number
+        agl_wind: options.agl_wind || 10,    // Windy requires at least one of the two sensor heights
+        agl_temp: options.agl_temp || 2,     // Height above the waterline, from the settings
         station_type: options.station_type,
         operator_text: options.stationName,
         operator_url: options.operator_url || ''
@@ -559,7 +559,7 @@ module.exports = function (app) {
   /**
    * Fetches weather data from Signal K and converts values to Windy-standard units.
    * K -> °C, Ratio -> %
-   * Signal K provides Pa. Windy API v2 expects Pa. (v1.0.8 Update)
+   * Pressure is passed through: Signal K provides Pa and Windy API v2 expects Pa.
    */
   function getStationData(options) {
     const pm = options.pathMap || {};

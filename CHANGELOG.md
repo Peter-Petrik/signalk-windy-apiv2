@@ -5,6 +5,25 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-10-10
+
+### Added
+- **Automated Test Suite**: `npm test` now runs a test suite with the Node.js built-in test runner in addition to the syntax check. The tests drive the plugin through a mock Signal K `app` object with the two requests to Windy intercepted and the clock controlled, and cover the reporting cycle, the movement guard, unit conversion, the gust rule, rate-limit and error handling, the state file, the configuration form, and the App Store metadata. No test contacts Windy. Previously the only automated check was `node --check index.js`.
+- **Signal K Plugin CI**: Added `.github/workflows/signalk-ci.yml`, which runs the shared Signal K plugin CI on Linux, Linux arm64, macOS and Windows with Node.js 22 and 24 on every push. The integration job is switched off: it enables the plugin with an empty configuration, and this version would then send requests without credentials to Windy.
+- **App Store Screenshots**: Declared `signalk.screenshots` in `package.json`. The screenshots were already part of the package but were not listed, so the Signal K App Store showed none.
+- **Node.js Version Declaration**: Declared `engines.node` as `>=20` in `package.json`. No minimum was declared before; the requirement itself is unchanged.
+- **Compatibility and Known Limitations in README**: The README now states what the plugin was tested with, and lists four known limitations: the Private share option is rejected by Windy, an operator logo set on Windy is removed by position updates, state is saved only when the plugin is stopped from the admin UI, and readings are not checked for age. Each was confirmed by testing; none is new in this version.
+
+### Changed
+- **Publish Workflow**: The release workflow now runs on Node.js 24, runs the tests before publishing, refuses a tag that does not match the version in `package.json`, ends the GitHub Release text with a link to the comparison with the previous version, skips the npm step when that version is already published, and uses `softprops/action-gh-release@v3`. The previous workflow ran on Node.js 20, which is below the minimum npm documents for Trusted Publishing, and published without running any test.
+- **Documentation Corrections**: Menu names in `README.md`, `MIGRATION.md` and `CONTRIBUTING.md` now match the current Signal K admin UI (**Apps & Plugins > Store**, **Apps & Plugins > Configuration**, **Server > Server Logs**). Log commands use the `signalk` service name that `signalk-server-setup` creates. The data tables in the README separate observation parameters from station record fields and state each conversion. The troubleshooting section lists every dashboard error message against the responses Windy returned on 2026-10-10: a Station ID that does not exist is now answered with 404 and no longer with 403. The migration guide no longer describes `environment.outside.relativeHumidity` as the standard Signal K humidity path; the specification path, and the one Signal K's NMEA converters publish, is `environment.outside.humidity`.
+- **App Icon Size Attributes**: `icon.svg` now declares a size of 128 by 128, the minimum the Signal K publishing guide asks for. The drawing is unchanged.
+- **Stale Comments in `index.js`**: Replaced leftover change notes with comments that describe the current code. The executable code is identical to 1.5.0.
+
+### Fixed
+- **App Store Icon Not Shown**: `package.json` declared the icon as `signalk.icon`. Signal K server reads `signalk.appIcon`, so the App Store showed generated initials instead of the icon. The key is now `signalk.appIcon`.
+- **Stale `package-lock.json`**: The lock file still recorded version 1.2.0 and the Apache-2.0 license. It has been regenerated.
+
 ## [1.5.0] - 2026-05-30
 
 ### Changed
@@ -37,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.0] - 2026-02-17
 
 ### Added
-- **Rate Limit Awareness ([retry_after](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues))**: The plugin now handles Windy's HTTP 429 rate limit responses by parsing the `retry_after` timestamp from the response body and rescheduling the next observation attempt at precisely the right time. Rate limit responses are treated as expected flow (debug log only) rather than errors, preventing false red indicators on the Signal K dashboard — particularly after a server restart when the plugin's timer may not be aligned with Windy's rate limit window.
+- **Rate Limit Awareness**: The plugin now handles Windy's HTTP 429 rate limit responses by parsing the `retry_after` timestamp from the response body and rescheduling the next observation attempt at precisely the right time. Rate limit responses are treated as expected flow (debug log only) rather than errors, preventing false red indicators on the Signal K dashboard — particularly after a server restart when the plugin's timer may not be aligned with Windy's rate limit window.
 - **Migration Guide**: Added [MIGRATION.md](MIGRATION.md) with step-by-step instructions for users switching from the legacy signalk-windy plugin, including credential model differences and Signal K path mapping.
 - **Contributing Guidelines**: Added [CONTRIBUTING.md](CONTRIBUTING.md) with development setup, testing, and pull request guidance.
 
@@ -227,7 +246,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.3.1...v1.3.2

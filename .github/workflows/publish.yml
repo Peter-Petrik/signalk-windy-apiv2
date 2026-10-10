@@ -1,9 +1,12 @@
 # Automated npm publish and GitHub Release triggered by version tags.
 # When a tag matching v* (e.g., v1.2.0) is pushed to GitHub,
 # this workflow:
-#   1. Extracts the matching version entry from CHANGELOG.md
-#   2. Creates a GitHub Release with those notes
-#   3. Publishes the package to the npm registry
+#   1. Runs the test suite
+#   2. Extracts the matching version entry from CHANGELOG.md and adds a
+#      link to the comparison with the previous version's tag
+#   3. Creates a GitHub Release with those notes
+#   4. Publishes the package to the npm registry, unless that version
+#      is already there
 #
 # Authentication:
 #   - npm: Trusted Publishing (OIDC) — no stored secrets or tokens required.
@@ -35,23 +38,45 @@ jobs:
       contents: write
 
     steps:
+      # The full history and all tags are fetched so that the previous
+      # version's tag can be found for the "Full changelog" link. The
+      # default is a single commit with no tags.
       - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/checkout@v7
         with:
-          node-version: '20'
+          fetch-depth: 0
+
+      # npm's documentation states that Trusted Publishing requires
+      # Node 22.14.0 or later and npm 11.5.1 or later.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      # Trusted Publishing (OIDC) requires npm >= 11.5.1.
-      # Node.js 20 ships with npm v10 which does not support the OIDC
-      # handshake, causing a misleading "Access token expired" / 404 error.
+      # Upgrading npm removes the dependence on whichever npm version the
+      # runner's Node.js happens to bundle. An npm too old for the OIDC
+      # handshake fails with a misleading "Access token expired" / 404 error.
       - name: Upgrade npm for OIDC support
         run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
+
+      # A tag must never publish a package whose tests fail.
+      - name: Run tests
+        run: npm test
+
+      # The tag and package.json must agree, otherwise the release notes
+      # and the published version would describe different things.
+      - name: Check tag matches package version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PACKAGE_VERSION"
+            exit 1
+          fi
 
       # Extract the release notes for this version from CHANGELOG.md.
       # Matches everything between the ## [X.Y.Z] header for the tagged
@@ -78,11 +103,40 @@ jobs:
           # Write to a file to preserve multiline content
           echo "$NOTES" > release_notes.md
 
+          # Add a link to the comparison with the previous version. The
+          # previous version is the nearest v* tag in the history before
+          # the tagged commit. A first release has none, and gets no link.
+          PREVIOUS="$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$PREVIOUS" ]; then
+            echo "" >> release_notes.md
+            echo "**Full changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS}...${GITHUB_REF_NAME}" >> release_notes.md
+          fi
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: release_notes.md
           name: ${{ github.ref_name }}
 
+      # npm refuses to publish a name and version that already exist. The
+      # first version of a package has to be published by hand, because a
+      # trusted publisher can only be added to a package that is already on
+      # the registry. This check lets the tag for such a version still
+      # produce its GitHub Release without failing at the publish step, and
+      # makes re-running the workflow for a published tag harmless.
+      - name: Check whether this version is already on npm
+        id: registry
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          FOUND="$(npm view "$NAME@$VERSION" version 2>/dev/null || true)"
+          if [ "$FOUND" = "$VERSION" ]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME@$VERSION is already on npm. The publish step is skipped."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm with provenance
+        if: steps.registry.outputs.published != 'true'
         run: npm publish --provenance --access public

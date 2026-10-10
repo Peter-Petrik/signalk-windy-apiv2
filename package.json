@@ -1,10 +1,10 @@
 {
   "name": "signalk-windy-apiv2",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Signal K plugin to report weather data to Windy.com API v2 using optimized movement tracking and state persistence.",
   "main": "index.js",
   "scripts": {
-    "test": "node --check index.js"
+    "test": "node --check index.js && node --test"
   },
   "repository": {
     "type": "git",
@@ -26,21 +26,30 @@
     "url": "https://github.com/Peter-Petrik/signalk-windy-apiv2/issues"
   },
   "homepage": "https://github.com/Peter-Petrik/signalk-windy-apiv2#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "signalk": {
     "pluginId": "signalk-windy-apiv2",
     "displayName": "Windy API v2 Reporter",
-    "icon": "icon.svg"
+    "appIcon": "./icon.svg",
+    "screenshots": [
+      "./screenshots/windy-station.png",
+      "./screenshots/configuration-credentials.png",
+      "./screenshots/configuration-vessel.png",
+      "./screenshots/configuration-path-overrides.png"
+    ]
   },
   "dependencies": {
     "axios": "^1.6.0"
   },
   "files": [
     "index.js",
-    "package.json",
     "README.md",
     "CHANGELOG.md",
     "MIGRATION.md",
     "CONTRIBUTING.md",
+    "LICENSE",
     "icon.svg",
     "screenshots/*.png"
   ]

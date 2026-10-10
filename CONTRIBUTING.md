@@ -11,15 +11,23 @@ Open an issue at [GitHub Issues](https://github.com/Peter-Petrik/signalk-windy-a
 - Steps to reproduce
 - Relevant log output (redact Station Password and API Key before posting)
 
-To capture plugin logs:
+To capture plugin logs on an installation created with `signalk-server-setup`:
 
 ```bash
-journalctl -u signalk-server -n 100 --no-pager | grep "signalk-windy-apiv2"
+journalctl -u signalk -n 100 --no-pager | grep "signalk-windy-apiv2"
 ```
 
 ## Development Setup
 
-The plugin is a single-file Node.js module (`index.js`) with one external dependency (`axios`).
+The plugin is plain JavaScript with no build step and one runtime dependency, `axios`.
+
+| Path | Contents |
+| :--- | :--- |
+| `index.js` | The plugin: configuration form, subscriptions, movement guard, the two requests to Windy, scheduling and state. |
+| `test/` | Automated tests. |
+| `test-support/harness.js` | The mock Signal K `app` object, the interception of the two requests, and the controlled clock that the tests share. |
+| `.github/workflows/signalk-ci.yml` | Runs the Signal K plugin CI on every push. |
+| `.github/workflows/publish.yml` | Publishes a tagged version to npm and creates the GitHub Release. |
 
 ### Local Testing
 
@@ -34,23 +42,40 @@ cd ~/.signalk
 npm link signalk-windy-apiv2
 ```
 
-4. Restart the Signal K server. The plugin will appear in **Server > Plugin Config**.
-5. Enable debug logging in the Signal K admin UI under **Server > Server Log** to see detailed plugin output.
+4. Restart the Signal K server. The plugin appears in **Apps & Plugins > Configuration**.
+5. Switch on **Enable debug** for the plugin on that page to see detailed plugin output in **Server > Server Logs**.
 
-### Syntax Check
+### Automated Tests
 
 ```bash
 npm test
 ```
 
-This runs `node --check index.js` to validate syntax.
+This checks the syntax of `index.js` and runs the test suite with the Node.js built-in test runner. No extra packages are needed.
+
+The tests drive the plugin the way the Signal K server does: through the `app` object, through `start()` and `stop()`, and through the passage of time. The two requests to Windy are intercepted, so no test contacts Windy, and the clock is controlled, so a five-minute reporting cycle takes no time.
+
+| File | Covers |
+| :--- | :--- |
+| `test/reporting.test.js` | What is sent, in which order and when; the movement guard |
+| `test/conversions.test.js` | Unit conversion, missing values, the gust rule, path overrides |
+| `test/errors.test.js` | Rate limits, rejected requests, network errors, dashboard messages |
+| `test/state.test.js` | The state file and restarts |
+| `test/schema.test.js` | The configuration form |
+| `test/package.test.js` | App Store metadata in `package.json` and the format of `CHANGELOG.md` |
+
+A change in behaviour needs a test that fails without it.
 
 ## Pull Requests
 
 - One logical change per PR.
 - Include a clear description of what the change does and why.
-- Update `CHANGELOG.md` under an `[Unreleased]` section with a summary of the change.
-- Test against a running Signal K server before submitting. If live Windy API testing is not possible, note that in the PR description.
+- Add an entry to `CHANGELOG.md` under the version being prepared. The file must not contain an `[Unreleased]` section when a version is tagged: the publish workflow copies the section for the tagged version into the GitHub Release, and the Signal K App Store shows that text.
+- Run `npm test`, and test against a running Signal K server before submitting. If live Windy API testing is not possible, note that in the PR description.
+
+## Releases
+
+A release is a commit that sets the version in `package.json` and in the header of `index.js` and adds the matching `## [x.y.z] - YYYY-MM-DD` section to `CHANGELOG.md`, followed by a tag `vx.y.z`. Pushing the tag runs the publish workflow, which runs the tests, checks that the tag matches `package.json`, creates the GitHub Release from the changelog section, and publishes to npm.
 
 ## Code Style
 
