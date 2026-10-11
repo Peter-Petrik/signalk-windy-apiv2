@@ -25,7 +25,8 @@ The plugin is plain JavaScript with no build step and one runtime dependency, `a
 | :--- | :--- |
 | `index.js` | The plugin's lifecycle and schedule: start, stop, subscriptions, the countdown, and the order of the two requests in a reporting cycle. |
 | `lib/schema.js` | The configuration form, and the reading of a saved configuration with its defaults. |
-| `lib/convert.js` | Signal K values to observation fields: unit conversion, the gust rule, range checks. |
+| `lib/readings.js` | The latest value of every subscribed path and the time it arrived. |
+| `lib/convert.js` | Readings to observation fields: age check, unit conversion, the gust rule, range checks. |
 | `lib/movement.js` | Distance from the last position sent to Windy. |
 | `lib/state.js` | Loading and saving `state.json`. |
 | `lib/windy.js` | The two requests to Windy and the meaning of each answer. |
@@ -59,14 +60,15 @@ npm test
 
 This checks the syntax of `index.js` and runs the test suite with the Node.js built-in test runner. No extra packages are needed.
 
-The tests drive the plugin the way the Signal K server does: through the `app` object, through `start()` and `stop()`, and through the passage of time. The two requests to Windy are intercepted, so no test contacts Windy, and the clock is controlled, so a five-minute reporting cycle takes no time.
+The tests drive the plugin the way the Signal K server does: through the `app` object, through `start()` and `stop()`, and through the passage of time. The two requests to Windy are intercepted, so no test contacts Windy, and the clock is controlled, so a five-minute reporting cycle takes no time. The harness delivers values the way the server's subscriptions do: the value held for each path at the moment of subscribing, then one delivery per update. By default it repeats every value once a minute, as working sensors do; `createEnv({ live: false })` gives sensors that have stopped.
 
 | File | Covers |
 | :--- | :--- |
 | `test/reporting.test.js` | What is sent, in which order and when; the movement guard |
 | `test/conversions.test.js` | Unit conversion, missing values, the gust rule, path overrides |
 | `test/robustness.test.js` | Values that are not numbers, out-of-range readings, positions without coordinates, a cycle that fails |
-| `test/settings.test.js` | Zero values, defaults without the form, the share option, the humidity path |
+| `test/settings.test.js` | Zero values, defaults without the form, the share option, Force GPS Updates, station elevation, the humidity path |
+| `test/stale.test.js` | Stale readings, values held by the server at start, the no-data line, wind and gust from the same samples |
 | `test/lifecycle.test.js` | Starting without credentials, stopping during a request, release of subscriptions |
 | `test/errors.test.js` | Rate limits, rejected requests, network errors, dashboard messages |
 | `test/state.test.js` | The state file and restarts |

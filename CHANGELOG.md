@@ -5,6 +5,22 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-10-11
+
+### Added
+- **Stale Readings Are Left Out**: A sensor reading that has not been updated within the new **Maximum Reading Age** setting is no longer sent. The default is 15 minutes, and it applies to existing installations after the update; 0 switches the check off. Before, the last value of a sensor that had been switched off or had lost its connection was reported as current weather for as long as the Signal K server ran. A sensor that sends a value only when the value changes can exceed the limit while working correctly; for such a sensor the limit can be raised or switched off.
+- **Left-Out Readings Shown on the Dashboard**: A field whose reading was left out, because it is too old, not a number, or outside the range Windy accepts, is shown with a dash, for example `H:-`. A field with no reading at all is not shown, as before.
+- **Force GPS Updates Indicator**: While **Force GPS Updates** is on, the dashboard shows `Forced` in place of the distance. The setting sends the position at every report, and nothing on the dashboard showed that it was on.
+- **Station Elevation Setting**: The elevation sent to Windy, shown there as AMSL, can now be set in the plugin configuration. Left empty, the GNSS antenna altitude is sent as before.
+- **Software Identification**: Each observation carries `softwaretype=signalk-windy-apiv2/<version>`, a field of Windy's API, so that Windy can tell which stations report through this plugin.
+
+### Changed
+- **All Readings Come From the Live Subscription**: Wind speed, direction, temperature, pressure, humidity, altitude and the position sent in a station update are now taken from the plugin's subscription, each with the time it arrived. Before, they were read from the server's stored values at the moment of the report, and only the gust and the distance came from the subscription. The stored values carry no arrival time, which the age check needs.
+- **Gust Never Below Wind**: Wind speed and gust now come from the same samples, and a gust is never sent below the wind speed of the same report. A report such as wind 8.6 kn with gust 0.2 kn, as described in [#9](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/9), can no longer be produced. The cause of that report has not been established, so the issue stays open.
+- **"No data" Line Replaces "Waiting for sensor data"**: When a cycle has nothing to send, the dashboard names the first path without a usable reading and the number of further ones, for example `No data: environment.wind.speedOverGround +4`, and keeps showing it through the countdown. The earlier message was replaced by the countdown after one second, and the readings of the last report stayed on the line as if they were current.
+- **No Station Update From an Old Position**: A station update is not sent when the last position is older than the Maximum Reading Age. The vessel may have moved since, and the station would be placed where the vessel no longer is.
+- **Settings Help Text**: The descriptions of Station Type, Operator Website URL, the two sensor heights and the Min Movement Threshold now say what each value does. The sensor heights are described as heights above the water line and not the station elevation, which was the misunderstanding behind one part of [#9](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/9).
+
 ## [1.5.2] - 2026-10-10
 
 ### Added
@@ -273,7 +289,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.2...HEAD
+[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.4.0...v1.5.0

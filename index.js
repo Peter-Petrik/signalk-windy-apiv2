@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.5.2 - Reporting survives bad data, a stopped plugin stays stopped, state is saved after every cycle
+ * v1.6.0 - Stale readings are left out, all readings from one source, Forced indicator, station elevation setting
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -28,7 +28,8 @@
  * parts with no notion of time live in lib/:
  *
  *   lib/schema.js    the configuration form and the reading of saved settings
- *   lib/convert.js   Signal K values to observation fields, with range checks
+ *   lib/readings.js  the latest value of every subscribed path, with its age
+ *   lib/convert.js   readings to observation fields, with range checks
  *   lib/movement.js  distance from the last position sent to Windy
  *   lib/state.js     loading and saving state.json
  *   lib/windy.js     the two requests and the meaning of Windy's answers
@@ -39,13 +40,19 @@
 const path = require('node:path')
 
 const { schema, uiSchema, resolveOptions } = require('./lib/schema')
-const { buildObservation, dashboardText, isNumber, inRange } = require('./lib/convert')
+const { createReadings } = require('./lib/readings')
+const { buildObservation, dashboardText, noDataText, humidityPaths, isNumber, inRange } = require('./lib/convert')
 const { isValidPosition, distanceMeters } = require('./lib/movement')
 const { loadState, saveState } = require('./lib/state')
 const windy = require('./lib/windy')
 
 // Signal K needs a moment after a start to receive its first sensor values.
 const WARM_UP_MS = 15000
+
+const POSITION_PATH = 'navigation.position'
+
+// Where the station elevation comes from when the owner has set none.
+const ALTITUDE_PATHS = ['navigation.gnss.antennaAltitude', 'navigation.altitude']
 
 module.exports = function (app) {
   // Everything that belongs to one run of the plugin, from start() to stop().
@@ -84,6 +91,14 @@ module.exports = function (app) {
   }
 
   /**
+   * The second field of the dashboard line: the distance from the position
+   * last sent to Windy, or "Forced" while Force GPS Updates is on. With that
+   * setting on, the position is sent at every report whatever the distance,
+   * and nothing else on the dashboard would show it.
+   */
+  const movementText = (s) => (s.options.forceUpdate ? 'Forced' : `Δ${Math.round(s.state.currentDistance)}m`)
+
+  /**
    * Heartbeat: updates the dashboard status once a second with a countdown.
    * Format: "Next: XmXXs | Δ###m | W:## G:## D:### T:## P:### H:## | HH:MM"
    * Ordered by time-sensitivity: countdown first, sensor data in the middle,
@@ -108,10 +123,13 @@ module.exports = function (app) {
       return
     }
 
-    const movement = `Δ${Math.round(s.state.currentDistance)}m`
-    app.setPluginStatus(lastReportString
-      ? `${heartbeat} | ${movement} | ${lastReportString}`
-      : `${heartbeat} | ${movement}`)
+    // After a cycle in which nothing could be sent, the line says which
+    // reading is missing for as long as that lasts. The readings of an
+    // earlier report would look like current weather.
+    const detail = s.noData || lastReportString
+    app.setPluginStatus(detail
+      ? `${heartbeat} | ${movementText(s)} | ${detail}`
+      : `${heartbeat} | ${movementText(s)}`)
   }
 
   /**
@@ -179,10 +197,15 @@ module.exports = function (app) {
       active: true,
       options,
       state: loadState(stateFile(), (line) => app.debug(line)),
+      readings: createReadings(),
       timer: null,
       statusTimer: null,
       unsubscribes: [],
-      peakGust: 0
+      // The highest wind speed delivered since the last report, and when.
+      peakGust: 0,
+      peakTime: 0,
+      // Dashboard text of a cycle in which nothing could be sent, or ''.
+      noData: ''
     }
     session = s
 
@@ -190,34 +213,71 @@ module.exports = function (app) {
       app.error(`Station position will not be updated: ${options.shareProblem}`)
     }
 
-    // Two live subscriptions, once a second each: the position, for the
-    // movement guard, and the wind speed, to catch the highest value between
-    // two reports. The server appends a function to `s.unsubscribes` for each
-    // subscription; stop() calls them. Without that, every restart of the
-    // plugin left another pair of subscriptions running for the life of the
-    // server process.
+    // One subscription for everything the plugin reports: the position, the
+    // six sensor paths and the altitude. Every value that arrives is noted
+    // in `s.readings` with the time it came, which is what lets a reading
+    // that has stopped arriving be recognised as stale. Reports are built
+    // from these readings alone, so the wind speed and the gust always come
+    // from the same samples.
+    //
+    // `period: 1000` asks the server for at most one value per second and
+    // path. A path that is not updated delivers nothing.
+    //
+    // The server appends a function to `s.unsubscribes` for each path;
+    // stop() calls them. Without that, every restart of the plugin left its
+    // subscriptions running for the life of the server process.
     const windPath = options.pathMap.windSpeed
+    const paths = [...new Set([
+      POSITION_PATH,
+      windPath,
+      options.pathMap.windGust,
+      options.pathMap.windDir,
+      options.pathMap.temp,
+      options.pathMap.pressure,
+      ...humidityPaths(options.pathMap.humidity),
+      ...ALTITUDE_PATHS
+    ])]
+
+    // While subscribe() runs, the server hands over the value it holds for
+    // each path, however old that value is. Those deliveries are told apart
+    // from live ones by this flag: they are synchronous, so they all happen
+    // before subscribe() returns.
+    let fromCache = true
+
     app.subscriptionmanager.subscribe({
       context: 'vessels.self',
-      subscribe: [
-        { path: 'navigation.position', period: 1000 },
-        { path: windPath, period: 1000 }
-      ]
+      subscribe: paths.map((skPath) => ({ path: skPath, period: 1000 }))
     }, s.unsubscribes, (err) => app.error(err), (delta) => {
       if (!s.active || !delta || !Array.isArray(delta.updates)) return
+      const arrived = Date.now()
       for (const update of delta.updates) {
         if (!update || !Array.isArray(update.values)) continue
+
+        // A live value is as old as its arrival, by this server's clock. A
+        // value from the server's cache is as old as its own timestamp says,
+        // unless that timestamp is missing or lies in the future, in which
+        // case nothing better is known than "now".
+        let time = arrived
+        if (fromCache) {
+          const stamped = Date.parse(update.timestamp)
+          if (Number.isFinite(stamped) && stamped <= arrived) time = stamped
+        }
+
         for (const v of update.values) {
-          if (!v) continue
-          if (v.path === 'navigation.position') handlePositionUpdate(s, v.value)
-          // A sample outside Windy's gust range is a sensor glitch. Taking it
-          // as the peak would cost the real peak of the interval.
-          if (v.path === windPath && isNumber(v.value) && inRange('gust', v.value) && v.value > s.peakGust) {
+          if (!v || typeof v.path !== 'string') continue
+          s.readings.record(v.path, v.value, time)
+          if (v.path === POSITION_PATH) handlePositionUpdate(s, v.value)
+          // The peak is built from live samples only. A sample outside
+          // Windy's gust range is a sensor glitch; taking it as the peak
+          // would cost the real peak of the interval.
+          if (v.path === windPath && !fromCache && isNumber(v.value) && inRange('gust', v.value) && v.value > s.peakGust) {
             s.peakGust = v.value
+            s.peakTime = arrived
           }
         }
       }
     })
+    fromCache = false
 
     // Continue the countdown that was running when the state was last saved,
     // or begin with the warm-up when that moment has passed.
@@ -270,15 +330,15 @@ module.exports = function (app) {
   }
 
   /**
-   * Station elevation in whole metres: the GNSS antenna altitude where Signal
-   * K has one, otherwise 0. Windy rejects an elevation that is not a whole
-   * number.
+   * Station elevation in whole metres: the value the owner has set, otherwise
+   * the GNSS antenna altitude where Signal K has a current one, otherwise 0.
+   * Windy rejects an elevation that is not a whole number.
    */
-  function stationElevation () {
-    for (const skPath of ['navigation.gnss.antennaAltitude', 'navigation.altitude']) {
-      const node = app.getSelfPath(skPath)
-      const value = node && typeof node === 'object' ? node.value : node
-      if (isNumber(value)) return Math.round(value)
+  function stationElevation (s, nowMs, maxAgeMs) {
+    if (s.options.elevation !== null) return s.options.elevation
+    for (const skPath of ALTITUDE_PATHS) {
+      const reading = s.readings.read(skPath, nowMs, maxAgeMs)
+      if (reading.state === 'ok' && isNumber(reading.value)) return Math.round(reading.value)
     }
     return 0
   }
@@ -305,10 +365,22 @@ module.exports = function (app) {
     const { options, state } = s
     const debug = (line) => app.debug(line)
 
-    const fields = buildObservation(app, options.pathMap, s.peakGust, debug)
+    const now = Date.now()
+    const maxAgeMs = options.maxAge * 60000
 
-    const positionNode = app.getSelfPath('navigation.position')
-    const position = positionNode && typeof positionNode === 'object' ? positionNode.value : undefined
+    // The peak is the highest wind speed since the last successful report,
+    // so it may be as old as one reporting interval and still belong to this
+    // report. It is older than that only when reports have been failing, for
+    // example during a long loss of connectivity; a peak from before then is
+    // no longer current weather. The limit is the interval or the Maximum
+    // Reading Age, whichever is longer, and none when the age check is off.
+    const peakLimitMs = Math.max(maxAgeMs, options.interval * 60000)
+    const peak = maxAgeMs > 0 && now - s.peakTime > peakLimitMs ? 0 : s.peakGust
+
+    const { fields, leftOut, missingPaths } = buildObservation(s.readings, options.pathMap, peak, now, maxAgeMs, debug)
+
+    const positionReading = s.readings.read(POSITION_PATH, now, maxAgeMs)
+    const position = positionReading.value
 
     const updateDue = options.forceUpdate || !state.hasReportedPosition || state.currentDistance >= options.minMove
 
@@ -317,10 +389,14 @@ module.exports = function (app) {
       // The owner has not chosen a share option Windy accepts. No value is
       // chosen for them; the heartbeat keeps the reason on the dashboard.
       app.debug(`Station update not sent: ${options.shareProblem}`)
+    } else if (updateDue && positionReading.state === 'stale') {
+      // The vessel may have moved since. Sending the old position would put
+      // the station where the vessel no longer is.
+      app.debug(`Station update not sent: the position was last updated ${Math.round(positionReading.ageMs / 60000)} minutes ago`)
     } else if (updateDue && !isValidPosition(position)) {
       app.debug('Station update not sent: navigation.position holds no usable position')
     } else if (updateDue) {
-      const payload = windy.stationPayload(options, position, stationElevation())
+      const payload = windy.stationPayload(options, position, stationElevation(s, now, maxAgeMs))
       app.debug(`Movement Guard: ${Math.round(state.currentDistance)}m from baseline position`)
       app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(payload)}`)
 
@@ -345,7 +421,10 @@ module.exports = function (app) {
 
     // --- STEP 2: OBSERVATION (GET) ---
     if (Object.keys(fields).length === 0) {
-      app.setPluginStatus(`Next: 0m00s | Δ${Math.round(state.currentDistance)}m | Waiting for sensor data`)
+      // Instruments switched off at anchor are the usual reason, so this is
+      // a plain status and not an error. The heartbeat keeps it on the line.
+      s.noData = noDataText(missingPaths)
+      app.setPluginStatus(`Next: 0m00s | ${movementText(s)} | ${s.noData}`)
       return null
     }
 
@@ -356,11 +435,13 @@ module.exports = function (app) {
       if (!s.active) return null
 
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-      lastReportString = `${dashboardText(fields)} | ${time}`
-      app.setPluginStatus(`Next: 0m00s | Δ${Math.round(state.currentDistance)}m | ${lastReportString}`)
+      lastReportString = `${dashboardText(fields, leftOut)} | ${time}`
+      s.noData = ''
+      app.setPluginStatus(`Next: 0m00s | ${movementText(s)} | ${lastReportString}`)
 
       // The peak belongs to the interval that has just been reported.
       s.peakGust = 0
+      s.peakTime = 0
     } catch (err) {
       if (!s.active) return null
       const problem = windy.describeObservationError(err, Date.now())

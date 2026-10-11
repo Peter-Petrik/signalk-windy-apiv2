@@ -60,6 +60,20 @@ describe('configuration schema', () => {
     assert.equal(sections.logic.properties.minMove.minimum, 0)
   })
 
+  it('checks the age of readings by default, with 0 to switch the check off', () => {
+    const maxAge = sections.logic.properties.maxAge
+    assert.equal(maxAge.type, 'number')
+    assert.equal(maxAge.default, 15)
+    assert.equal(maxAge.minimum, 0)
+  })
+
+  it('leaves the station elevation empty by default, so that existing stations keep their GNSS altitude', () => {
+    const elevation = sections.identity.properties.elevation
+    assert.equal(elevation.type, 'integer')
+    assert.ok(!('default' in elevation))
+    assert.ok(!('minimum' in elevation), 'a station below sea level is valid')
+  })
+
   it('takes sensor heights as whole numbers, as Windy requires', () => {
     assert.equal(sections.identity.properties.agl_wind.type, 'integer')
     assert.equal(sections.identity.properties.agl_temp.type, 'integer')

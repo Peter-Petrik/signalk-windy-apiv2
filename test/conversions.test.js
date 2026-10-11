@@ -184,7 +184,7 @@ describe('path overrides', () => {
     )
   })
 
-  it('subscribes to position and to the configured wind speed path once a second', () => {
+  it('subscribes once a second to the position, every sensor path and the altitude', () => {
     const env = createEnv()
     env.plugin.start(config({ pathMap: { windSpeed: 'custom.ws' } }))
     assert.equal(env.subscriptions.length, 1)
@@ -192,9 +192,27 @@ describe('path overrides', () => {
       context: 'vessels.self',
       subscribe: [
         { path: 'navigation.position', period: 1000 },
-        { path: 'custom.ws', period: 1000 }
+        { path: 'custom.ws', period: 1000 },
+        { path: 'environment.wind.gust', period: 1000 },
+        { path: 'environment.wind.directionTrue', period: 1000 },
+        { path: 'environment.outside.temperature', period: 1000 },
+        { path: 'environment.outside.pressure', period: 1000 },
+        { path: 'environment.outside.humidity', period: 1000 },
+        { path: 'environment.outside.relativeHumidity', period: 1000 },
+        { path: 'navigation.gnss.antennaAltitude', period: 1000 },
+        { path: 'navigation.altitude', period: 1000 }
       ]
     })
+    env.plugin.stop()
+  })
+
+  it('subscribes to a custom humidity path alone, without the second standard path', () => {
+    const env = createEnv()
+    env.plugin.start(config({ pathMap: { humidity: 'custom.h' } }))
+    const paths = env.subscriptions[0].command.subscribe.map((row) => row.path)
+    assert.ok(paths.includes('custom.h'))
+    assert.ok(!paths.includes('environment.outside.humidity'))
+    assert.ok(!paths.includes('environment.outside.relativeHumidity'))
     env.plugin.stop()
   })
 })

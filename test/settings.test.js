@@ -171,6 +171,87 @@ describe('share option', () => {
   })
 })
 
+describe('Force GPS Updates', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('shows "Forced" in place of the distance on every form of the dashboard line', async () => {
+    const env = createEnv()
+    env.plugin.start(config({ logic: { interval: 5, minMove: 300, forceUpdate: true } }))
+    await advance(1000)
+    assert.equal(env.lastStatus(), 'Warm: 0m14s | Forced')
+    await advance(WARM_UP_MS - 1000)
+    assert.match(env.lastStatus(), /^Next: 0m00s \| Forced \| W:9\.9 G:14\.0 D:180 T:20\.0 P:101\.3 H:65 \| \d{2}:\d{2}$/)
+    await advance(60000)
+    assert.match(env.lastStatus(), /^Next: 4m00s \| Forced \| W:9\.9 /)
+    env.plugin.stop()
+  })
+
+  it('shows the distance when the setting is off', async () => {
+    const env = createEnv()
+    env.plugin.start(config())
+    await advance(WARM_UP_MS + 60000)
+    assert.match(env.lastStatus(), /^Next: 4m00s \| Δ0m \| /)
+    assert.ok(!env.statuses.some((status) => status.includes('Forced')))
+    env.plugin.stop()
+  })
+
+  it('shows "Forced" on the no-data line too', async () => {
+    const env = createEnv({ tree: { navigation: fullTree().navigation } })
+    env.plugin.start(config({ logic: { interval: 5, minMove: 300, forceUpdate: true } }))
+    await advance(WARM_UP_MS + 60000)
+    assert.equal(env.lastStatus(), 'Next: 4m00s | Forced | No data: environment.wind.speedOverGround +4')
+    env.plugin.stop()
+  })
+})
+
+describe('station elevation', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  async function elevationFor (tree, identityOverrides) {
+    const env = createEnv({ tree })
+    env.plugin.start(config(identity(identityOverrides)))
+    await advance(WARM_UP_MS)
+    const sent = env.puts()[0].body.elev_m
+    env.plugin.stop()
+    return sent
+  }
+
+  const treeWithAltitude = (value) => {
+    const tree = fullTree()
+    tree.navigation.gnss = { antennaAltitude: { value } }
+    return tree
+  }
+
+  it('sends the value from the settings in place of the GNSS altitude', async () => {
+    assert.equal(await elevationFor(treeWithAltitude(27.3), { elevation: 2 }), 2)
+  })
+
+  it('sends an elevation of 0 from the settings as 0', async () => {
+    assert.equal(await elevationFor(treeWithAltitude(27.3), { elevation: 0 }), 0)
+  })
+
+  it('accepts a negative elevation and rounds one that is not a whole number', async () => {
+    assert.equal(await elevationFor(fullTree(), { elevation: -3 }), -3)
+    assert.equal(await elevationFor(fullTree(), { elevation: 4.6 }), 5)
+  })
+
+  it('sends the GNSS altitude when the setting is empty, as before', async () => {
+    assert.equal(await elevationFor(treeWithAltitude(27.3), {}), 27)
+    assert.equal(await elevationFor(treeWithAltitude(27.3), { elevation: 'high' }), 27)
+  })
+
+  it('sends 0 when the setting is empty and the GNSS altitude is older than the limit', async () => {
+    const env = createEnv({ live: false })
+    env.hold('navigation.gnss.antennaAltitude', 27.3, 60 * 60000)
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.equal(env.puts()[0].body.elev_m, 0)
+    env.plugin.stop()
+  })
+})
+
 describe('humidity path', () => {
   beforeEach(setUp)
   afterEach(tearDown)

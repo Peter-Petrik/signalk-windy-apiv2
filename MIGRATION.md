@@ -45,6 +45,7 @@ These are available after migration with no additional configuration:
 - **Peak Gust Tracking** — captures the highest wind speed reading between reporting intervals at 1Hz, ensuring short-lived gusts are not missed.
 - **State Persistence** — the reporting timer, movement baseline, and distance tracking are saved after every reporting cycle and survive plugin restarts, server restarts and reboots.
 - **Dashboard Heartbeat** — live countdown to next report with current sensor readings and distance from baseline.
+- **Stale Reading Protection** — a reading from a sensor that has stopped updating is left out of the report after 15 minutes (configurable).
 - **Rate Limit Awareness** — handles Windy's 429 responses by rescheduling precisely to the provided retry window.
 
 ## Migration Steps

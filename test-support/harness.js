@@ -37,6 +37,10 @@ const FIVE_MINUTES_MS = 5 * 60 * 1000
 const originalPut = axios.put
 const originalGet = axios.get
 const tempDirs = []
+const sensorTimers = []
+
+// How often the simulated sensors repeat their values.
+const SENSOR_PERIOD_MS = 60000
 
 /** A complete, valid configuration as the admin UI would save it. */
 function config (overrides = {}) {
@@ -56,7 +60,7 @@ function config (overrides = {}) {
   }
 }
 
-/** A data tree with every default path present, in Signal K base units. */
+/** The values of a vessel with every default path present, in Signal K base units. */
 function fullTree () {
   return {
     navigation: { position: { value: { latitude: 37.5, longitude: 23.4 } } },
@@ -89,11 +93,32 @@ function networkError (code) {
   return err
 }
 
+/** The node at a dotted path of a tree, or undefined. */
+function nodeAt (tree, skPath) {
+  return skPath.split('.').reduce((node, key) => (node == null ? undefined : node[key]), tree)
+}
+
+/** Every path of a tree that holds a value. */
+function valuePaths (node, prefix = '') {
+  if (node === null || typeof node !== 'object') return []
+  if ('value' in node) return [prefix]
+  return Object.keys(node).flatMap((key) => valuePaths(node[key], prefix ? `${prefix}.${key}` : key))
+}
+
 /**
  * Creates one plugin instance with a mock Signal K `app` and intercepted HTTP.
  *
+ * The mock behaves like the server in the three ways the plugin depends on:
+ * a subscription receives only the paths it asked for; at the moment of
+ * subscribing it is handed the value the server holds for each of them, with
+ * that value's own timestamp; and after that it receives a value only when
+ * the path is updated.
+ *
  * Options:
- *   tree  the data tree returned by app.getSelfPath()
+ *   tree  the values the server holds when the plugin starts
+ *   live  true (the default) to have every value in the tree repeated once
+ *         a minute, as a working sensor does; false for sensors that have
+ *         stopped, which is what the tests of stale readings need
  *   put   replacement for the station update request
  *   get   replacement for the observation request
  */
@@ -113,6 +138,8 @@ function createEnv (options = {}) {
     // Subscriptions that are still live; a released one is removed.
     subscriptions: [],
     subscribeCalls: 0,
+    // The plugin is not meant to read the data tree; this counts if it does.
+    treeReads: 0,
     put: options.put || (async () => ({ status: 200, data: {} })),
     get: options.get || (async () => ({ status: 200, data: {} }))
   }
@@ -137,7 +164,10 @@ function createEnv (options = {}) {
 
   env.app = {
     getDataDirPath: () => dataDir,
-    getSelfPath: (skPath) => skPath.split('.').reduce((node, key) => (node == null ? undefined : node[key]), env.tree),
+    getSelfPath: (skPath) => {
+      env.treeReads++
+      return nodeAt(env.tree, skPath)
+    },
     setPluginStatus: (message) => env.statuses.push(message),
     setPluginError: (message) => env.errors.push(message),
     debug: (message) => env.debugLines.push(String(message)),
@@ -146,24 +176,53 @@ function createEnv (options = {}) {
       // As on the server: the caller's array receives one function per
       // subscription, and calling it ends that subscription.
       subscribe: (command, unsubscribes, errorCallback, callback) => {
-        const subscription = { command, callback }
+        const subscription = { command, callback, paths: command.subscribe.map((row) => row.path) }
         env.subscriptions.push(subscription)
         env.subscribeCalls++
         unsubscribes.push(() => {
           const index = env.subscriptions.indexOf(subscription)
           if (index !== -1) env.subscriptions.splice(index, 1)
         })
+        // The values the server holds, handed over before subscribe() returns.
+        for (const skPath of subscription.paths) {
+          const node = nodeAt(env.tree, skPath)
+          if (node && typeof node === 'object' && 'value' in node) {
+            callback(delta(skPath, node.value, node.timestamp || new Date().toISOString()))
+          }
+        }
       }
     }
   }
 
   env.plugin = createPlugin(env.app)
 
-  /** Delivers one value to the plugin as a Signal K delta. */
+  /**
+   * Updates one path, as a sensor does: the server keeps the value, and
+   * every subscription that asked for the path receives it.
+   */
   env.emit = (skPath, value) => {
-    for (const subscription of env.subscriptions) {
-      subscription.callback({ updates: [{ values: [{ path: skPath, value }] }] })
+    const timestamp = new Date().toISOString()
+    const keys = skPath.split('.')
+    let node = env.tree
+    for (const key of keys.slice(0, -1)) node = node[key] = node[key] || {}
+    node[keys[keys.length - 1]] = { value, timestamp }
+    for (const subscription of [...env.subscriptions]) {
+      if (subscription.paths.includes(skPath)) subscription.callback(delta(skPath, value, timestamp))
     }
+  }
+
+  /** Puts a value into the server's store with a given age, without delivering it. */
+  env.hold = (skPath, value, ageMs) => {
+    const keys = skPath.split('.')
+    let node = env.tree
+    for (const key of keys.slice(0, -1)) node = node[key] = node[key] || {}
+    node[keys[keys.length - 1]] = { value, timestamp: new Date(Date.now() - ageMs).toISOString() }
+  }
+
+  if (options.live !== false) {
+    sensorTimers.push(setInterval(() => {
+      for (const skPath of valuePaths(env.tree)) env.emit(skPath, nodeAt(env.tree, skPath).value)
+    }, SENSOR_PERIOD_MS))
   }
 
   env.puts = () => env.requests.filter((r) => r.method === 'PUT')
@@ -171,6 +230,11 @@ function createEnv (options = {}) {
   env.lastStatus = () => env.statuses[env.statuses.length - 1]
 
   return env
+}
+
+/** One value as the server delivers it to a subscription. */
+function delta (skPath, value, timestamp) {
+  return { context: 'vessels.self', updates: [{ $source: 'test', timestamp, values: [{ path: skPath, value }] }] }
 }
 
 /**
@@ -218,6 +282,7 @@ function setUp () {
 
 /** Call from afterEach: real timers, real axios, temporary directories removed. */
 function tearDown () {
+  while (sensorTimers.length) clearInterval(sensorTimers.pop())
   mock.timers.reset()
   axios.put = originalPut
   axios.get = originalGet

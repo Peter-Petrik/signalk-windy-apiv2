@@ -29,16 +29,16 @@ describe('the reporting loop', () => {
 
   it('goes on after a cycle that fails in an unforeseen way', async () => {
     const env = createEnv()
-    const read = env.app.getSelfPath
+    const debug = env.app.debug
     let broken = true
-    env.app.getSelfPath = (skPath) => {
-      if (broken) throw new Error('data tree unavailable')
-      return read(skPath)
+    env.app.debug = (line) => {
+      if (broken) throw new Error('log unavailable')
+      debug(line)
     }
     env.plugin.start(config())
     await advance(WARM_UP_MS)
     assert.equal(env.requests.length, 0)
-    assert.deepEqual(env.errors, ['Reporting cycle failed: data tree unavailable'])
+    assert.deepEqual(env.errors, ['Reporting cycle failed: log unavailable'])
     assert.ok(env.errorLines.some((line) => line.startsWith('Reporting cycle failed: ')))
 
     broken = false
@@ -89,7 +89,7 @@ describe('values that are not numbers', () => {
     tree.environment.outside.temperature.value = { celsius: 20 }
     tree.environment.outside.pressure.value = true
     const { params, env } = await observationFor(tree)
-    assert.deepEqual(Object.keys(params).sort(), ['id', 'rh', 'ts'])
+    assert.deepEqual(Object.keys(params).sort(), ['id', 'rh', 'softwaretype', 'ts'])
     assert.equal(params.rh, '65')
     assert.equal(env.debugLines.filter((line) => line.startsWith('Reading ignored: ')).length, 5)
   })
@@ -105,6 +105,13 @@ describe('values that are not numbers', () => {
   it('sends elevation 0 when the altitude is not a number', async () => {
     const tree = fullTree()
     tree.navigation.gnss = { antennaAltitude: { value: null } }
+    const { env } = await observationFor(tree)
+    assert.equal(env.puts()[0].body.elev_m, 0)
+  })
+
+  it('sends elevation 0 when the altitude holds text', async () => {
+    const tree = fullTree()
+    tree.navigation.gnss = { antennaAltitude: { value: 'n/a' } }
     const { env } = await observationFor(tree)
     assert.equal(env.puts()[0].body.elev_m, 0)
   })

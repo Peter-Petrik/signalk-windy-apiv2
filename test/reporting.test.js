@@ -10,6 +10,7 @@ const {
   START_TIME, WARM_UP_MS, FIVE_MINUTES_MS,
   config, fullTree, createEnv, advance, setUp, tearDown
 } = require('../test-support/harness')
+const { version } = require('../package.json')
 
 describe('reporting cycle', () => {
   beforeEach(setUp)
@@ -74,7 +75,8 @@ describe('reporting cycle', () => {
       winddir: '180',
       temp: '20.0',
       pressure: '101325',
-      rh: '65'
+      rh: '65',
+      softwaretype: `signalk-windy-apiv2/${version}`
     })
     env.plugin.stop()
   })
@@ -148,7 +150,7 @@ describe('reporting cycle', () => {
     env.plugin.start(config())
     await advance(WARM_UP_MS)
     assert.deepEqual(env.requests.map((r) => r.method), ['PUT'])
-    assert.ok(env.statuses.includes('Next: 0m00s | Δ0m | Waiting for sensor data'))
+    assert.ok(env.statuses.includes('Next: 0m00s | Δ0m | No data: environment.wind.speedOverGround +4'))
     env.plugin.stop()
   })
 })
