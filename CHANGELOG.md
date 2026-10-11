@@ -5,6 +5,12 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-10-11
+
+### Changed
+- **Reporting Interval Is a Whole Number**: The **Reporting Interval** field of the plugin configuration now accepts whole minutes only, like the other whole-number settings. Before, the form accepted a fraction such as 7.5. An interval saved with a fraction keeps its schedule after the update; the form asks for a whole number when that configuration is next saved.
+- **Path Overrides Screenshot**: The screenshot of the **Sensor Path Overrides (Advanced)** section was retaken on Signal K server 2.33.0. It shows the full paths and the humidity default `environment.outside.humidity`, where the earlier screenshot showed the default from before 1.5.2.
+
 ## [1.6.0] - 2026-10-11
 
 ### Added
@@ -291,6 +297,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
 [Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.0...HEAD
+[1.6.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.0...v1.5.1

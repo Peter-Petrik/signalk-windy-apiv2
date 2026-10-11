@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.6.0 - Stale readings are left out, all readings from one source, Forced indicator, station elevation setting
+ * v1.6.1 - Reporting interval as a whole number in the form, path overrides screenshot retaken
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *

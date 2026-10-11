@@ -88,6 +88,17 @@ describe('defaults without the form', () => {
     env.plugin.stop()
   })
 
+  it('keeps a fractional interval saved before the form asked for whole minutes', async () => {
+    const env = createEnv()
+    env.plugin.start(config({ logic: { interval: 7.5, minMove: 300, forceUpdate: false } }))
+    await advance(WARM_UP_MS)
+    await advance(7.5 * 60000 - 1)
+    assert.equal(env.gets().length, 1)
+    await advance(1)
+    assert.equal(env.gets().length, 2)
+    env.plugin.stop()
+  })
+
   it('uses the default path for a sensor whose path was saved empty', async () => {
     const env = createEnv()
     env.plugin.start(config({ pathMap: { windSpeed: '  ', temp: '' } }))
