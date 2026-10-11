@@ -5,6 +5,12 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-10-12
+
+### Changed
+- **README Names the Save Configuration Button**: The README told the reader to click **Submit** to save the plugin configuration. Current Signal K servers label that button **Save Configuration**, so the Quick Start, the restart instructions and the troubleshooting text now use that name or describe the action without a button name. The Quick Start also states that saving the configuration for the first time enables the plugin.
+- **Transmission Settings Screenshot**: The screenshot of the **Transmission & Movement Guard** section was retaken with 1.6.1. It shows the description of the **Reporting Interval** as reworded in that version.
+
 ## [1.6.1] - 2026-10-11
 
 ### Changed
@@ -297,6 +303,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
 [Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.0...HEAD
+[1.6.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.2...v1.6.0
 [1.5.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.5.1...v1.5.2

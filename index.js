@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.6.1 - Reporting interval as a whole number in the form, path overrides screenshot retaken
+ * v1.6.2 - README names the Save Configuration button, transmission settings screenshot retaken
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
