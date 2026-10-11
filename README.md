@@ -188,9 +188,13 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for guideli
 ### Vessel on Windy Map
 ![Windy Station View](screenshots/windy-station.png)
 
+### Dashboard Status
+![Dashboard Status](screenshots/dashboard-status.png)
+
 ### Plugin Configuration
 ![Credentials](screenshots/configuration-credentials.png)
 ![Vessel](screenshots/configuration-vessel.png)
+![Transmission](screenshots/configuration-transmission.png)
 ![Path Overrides](screenshots/configuration-path-overrides.png)
 
 ## License

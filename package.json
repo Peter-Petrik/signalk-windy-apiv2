@@ -36,8 +36,10 @@
     "appIcon": "./icon.svg",
     "screenshots": [
       "./screenshots/windy-station.png",
+      "./screenshots/dashboard-status.png",
       "./screenshots/configuration-credentials.png",
       "./screenshots/configuration-vessel.png",
+      "./screenshots/configuration-transmission.png",
       "./screenshots/configuration-path-overrides.png"
     ]
   },
