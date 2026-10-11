@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.6.2 - README names the Save Configuration button, transmission settings screenshot retaken
+ * v1.6.3 - Global API Key description names the API Keys page, credentials screenshot retaken
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *

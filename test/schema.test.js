@@ -36,6 +36,13 @@ describe('configuration schema', () => {
     assert.deepEqual(sections.credentials.required, ['stationId', 'stationPassword', 'apiKey'])
   })
 
+  it('says where the API key is created, as Windy\'s API reference does', () => {
+    const description = sections.credentials.properties.apiKey.description
+    assert.match(description, /API Keys page/)
+    assert.match(description, /stations\.windy\.com/)
+    assert.doesNotMatch(description, /account settings/)
+  })
+
   it('does not allow a reporting interval below Windy\'s five-minute limit', () => {
     assert.equal(sections.logic.properties.interval.minimum, 5)
     assert.equal(sections.logic.properties.interval.default, 5)
