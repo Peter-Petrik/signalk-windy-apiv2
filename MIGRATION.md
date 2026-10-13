@@ -62,6 +62,8 @@ These are available after migration with no additional configuration:
    - Global API Key (from the API Keys page)
    - Display Name (the name shown on the Windy map)
 
+   Then click **Save Configuration** below the form. Saving the configuration for the first time also enables the plugin.
+
 5. **Check path overrides.** If the vessel provides `environment.wind.directionGround` instead of `directionTrue`, open the "Sensor Path Overrides" section and update the Wind Direction path. The other defaults match the paths the legacy plugin reads.
 
 6. **Disable the legacy plugin.** In **Apps & Plugins > Configuration**, disable signalk-windy to prevent both plugins from reporting simultaneously. The legacy plugin can be uninstalled in **Apps & Plugins > Store** once the new plugin is confirmed working.
@@ -74,7 +76,7 @@ If the station does not appear on Windy after migration:
 
 - **Check credentials.** The v2 API uses three separate credentials (Station ID, Station Password, Global API Key). Verify each is entered in the correct field.
 - **Check the dashboard message.** The plugin names the credential to check: "Not configured" when a credential is missing, "Station Password rejected by Windy" for the Station Password, "Station ID and Station Password do not belong together" when the two are not from the same station, "Windy rejected the Global API Key (403)" for the Global API Key, and "Windy does not know this Station ID (404)" for a Station ID that does not exist. The README's Troubleshooting section lists every message.
-- **Check the server log.** Switch on **Enable debug** for the plugin in **Apps & Plugins > Configuration** and look at **Server > Server Logs** for the HTTP status codes. A 400 on an observation with a message about the password indicates a wrong Station Password; a 403 on the station update indicates a wrong API Key.
+- **Check the server log.** Switch on **Enable debug log** for the plugin in **Apps & Plugins > Configuration** and look at **Server > Server Logs** for the HTTP status codes. A 400 on an observation with a message about the password indicates a wrong Station Password; a 403 on the station update indicates a wrong API Key.
 - **Allow time for Windy processing.** According to Windy's documentation, a newly created station can take up to 15 minutes to appear on the map, and data sent during that time is lost.
 
 For bug reports and questions, open an issue at [GitHub Issues](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues).

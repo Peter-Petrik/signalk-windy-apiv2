@@ -85,6 +85,8 @@ Signal K server versions older than 2.31.1 have not been tested with this releas
 5. **Set Movement Guard**: Choose a distance threshold (default 300m). The station position on Windy is updated only when the vessel moves beyond this distance from the last reported point.
 6. **Check the Dashboard**: After 15 seconds the plugin status shows the reported readings and a countdown to the next report. Until all three credentials are entered, the status reads "Not configured" and nothing is sent.
 
+Windy publishes the same setup in its own documentation: [Signal K guide on Windy Stations](https://stations.windy.com/docs/guides/Signal%20K).
+
 Users migrating from the legacy signalk-windy plugin should follow the [Migration Guide](MIGRATION.md).
 
 ## Technical Details

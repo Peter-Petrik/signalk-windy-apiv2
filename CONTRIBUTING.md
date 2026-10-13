@@ -50,7 +50,7 @@ npm link signalk-windy-apiv2
 ```
 
 4. Restart the Signal K server. The plugin appears in **Apps & Plugins > Configuration**.
-5. Switch on **Enable debug** for the plugin on that page to see detailed plugin output in **Server > Server Logs**.
+5. Switch on **Enable debug log** for the plugin on that page to see detailed plugin output in **Server > Server Logs**.
 
 ### Automated Tests
 

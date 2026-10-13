@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.6.3 - Global API Key description names the API Keys page, credentials screenshot retaken
+ * v1.6.4 - README links Windy's Signal K guide, migration and contributing guides name the current controls
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
