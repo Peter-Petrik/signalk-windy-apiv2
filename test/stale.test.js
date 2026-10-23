@@ -10,7 +10,7 @@ const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert/strict')
 const {
   WARM_UP_MS, FIVE_MINUTES_MS,
-  config, fullTree, createEnv, httpError, advance, setUp, tearDown
+  config, fullTree, createEnv, httpError, networkError, deferred, advance, settle, setUp, tearDown
 } = require('../test-support/harness')
 
 const SENSOR_PATHS = [
@@ -316,12 +316,15 @@ describe('nothing to report', () => {
     env.plugin.stop()
   })
 
-  it('keeps the readings of the last report when a report fails for another reason', async () => {
+  it('shows that Windy cannot be reached in place of the readings, and the readings again after the next report', async () => {
     const env = createEnv()
     env.plugin.start(config())
     await advance(WARM_UP_MS)
-    env.get = async () => { throw httpError(500, {}) }
+    env.get = async () => { throw networkError('EAI_AGAIN') }
     await advance(FIVE_MINUTES_MS + 60000)
+    assert.match(env.lastStatus(), /^Next: 4m00s \| Δ0m \| No connection to Windy since \d{2}:\d{2}$/)
+    env.get = async () => ({ status: 200, data: {} })
+    await advance(FIVE_MINUTES_MS)
     assert.match(env.lastStatus(), /^Next: 4m00s \| Δ0m \| W:9\.9 /)
     env.plugin.stop()
   })
@@ -456,6 +459,194 @@ describe('the data tree', () => {
     assert.equal(env.puts().length, 2)
     assert.equal(env.puts()[1].body.elev_m, 3)
     assert.equal(env.treeReads, 0)
+    env.plugin.stop()
+  })
+})
+
+describe('the peak', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('takes in the samples that arrive while a report is on its way to Windy', async () => {
+    const tree = fullTree()
+    delete tree.environment.wind.gust
+    const env = createEnv({ tree, live: false })
+    const answer = deferred()
+    env.get = () => answer.promise
+    env.plugin.start(config())
+    env.emit('environment.wind.speedOverGround', 6.0)
+    await advance(WARM_UP_MS)
+    assert.equal(lastParams(env).gust, '6.0')
+    // A squall while Windy has not answered yet.
+    env.emit('environment.wind.speedOverGround', 14.0)
+    env.emit('environment.wind.speedOverGround', 4.0)
+    answer.resolve()
+    await settle()
+    env.get = async () => ({ status: 200, data: {} })
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(lastParams(env).wind, '4.0')
+    assert.equal(lastParams(env).gust, '14.0')
+    env.plugin.stop()
+  })
+
+  it('keeps the higher of the two when a failed report gives its peak back', async () => {
+    const tree = fullTree()
+    delete tree.environment.wind.gust
+    const env = createEnv({ tree, live: false })
+    const answer = deferred()
+    env.get = () => answer.promise
+    env.plugin.start(config())
+    env.emit('environment.wind.speedOverGround', 12.0)
+    await advance(WARM_UP_MS)
+    env.emit('environment.wind.speedOverGround', 15.0)
+    env.emit('environment.wind.speedOverGround', 5.0)
+    answer.reject(networkError('ETIMEDOUT'))
+    await settle()
+    env.get = async () => ({ status: 200, data: {} })
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(lastParams(env).gust, '15.0')
+    env.plugin.stop()
+  })
+
+  it('is given back when the report is rate limited', async () => {
+    const tree = fullTree()
+    delete tree.environment.wind.gust
+    const env = createEnv({ tree, live: false })
+    env.get = async () => { throw httpError(429, {}) }
+    env.plugin.start(config())
+    env.emit('environment.wind.speedOverGround', 12.0)
+    env.emit('environment.wind.speedOverGround', 5.0)
+    await advance(WARM_UP_MS)
+    env.get = async () => ({ status: 200, data: {} })
+    env.emit('environment.wind.speedOverGround', 5.0)
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(lastParams(env).gust, '12.0')
+    env.plugin.stop()
+  })
+
+  it('starts again from the samples after a long failure, instead of being lost', async () => {
+    const tree = fullTree()
+    delete tree.environment.wind.gust
+    const env = createEnv({ tree, live: false })
+    env.get = async () => { throw networkError('EAI_AGAIN') }
+    env.plugin.start(config())
+    env.emit('environment.wind.speedOverGround', 20.0)
+    await advance(WARM_UP_MS)
+    // Fifteen minutes without connectivity: the peak of 20 m/s is now too
+    // old to be reported. The samples that follow make the peak of now,
+    // although they are lower.
+    await advance(3 * FIVE_MINUTES_MS - 10000)
+    env.emit('environment.wind.speedOverGround', 9.0)
+    env.emit('environment.wind.speedOverGround', 6.0)
+    refresh(env, SENSOR_PATHS.filter((p) => p !== 'environment.wind.gust' && p !== 'environment.wind.speedOverGround'))
+    env.get = async () => ({ status: 200, data: {} })
+    await advance(10000)
+    assert.equal(lastParams(env).wind, '6.0')
+    assert.equal(lastParams(env).gust, '9.0')
+    env.plugin.stop()
+  })
+
+  it('never expires when the age check is switched off', async () => {
+    const tree = fullTree()
+    delete tree.environment.wind.gust
+    const env = createEnv({ tree, live: false })
+    env.get = async () => { throw networkError('EAI_AGAIN') }
+    env.plugin.start(config(logic({ maxAge: 0 })))
+    env.emit('environment.wind.speedOverGround', 20.0)
+    await advance(WARM_UP_MS)
+    // An hour without connectivity; the wind drops.
+    await advance(12 * FIVE_MINUTES_MS - 10000)
+    env.emit('environment.wind.speedOverGround', 6.0)
+    env.get = async () => ({ status: 200, data: {} })
+    await advance(10000)
+    assert.equal(lastParams(env).wind, '6.0')
+    assert.equal(lastParams(env).gust, '20.0')
+    env.plugin.stop()
+  })
+})
+
+describe('readings that come back while the report does not reach Windy', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('end the "No data" line, although the report does not reach Windy', async () => {
+    const env = createEnv({ tree: { navigation: fullTree().navigation }, live: false })
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.match(env.lastStatus(), /No data: /)
+    // A rate limit: the observation does not reach Windy, and nothing else
+    // takes the place of the readings on the line.
+    env.get = async () => { throw httpError(429, {}) }
+    env.emit('environment.outside.temperature', 293.15)
+    await advance(FIVE_MINUTES_MS + 1000)
+    assert.doesNotMatch(env.lastStatus(), /No data/)
+    env.plugin.stop()
+  })
+})
+
+describe('a path the Signal K server declares timed out', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('is left out and shown with a dash, like any reading of a sensor that has stopped', async () => {
+    const env = createEnv({ live: false })
+    env.plugin.start(config())
+    env.timeOut('environment.outside.humidity')
+    await advance(WARM_UP_MS)
+    assert.ok(!('rh' in lastParams(env)))
+    assert.match(env.lastStatus(), / H:- \|/)
+    assert.ok(env.debugLines.some((line) => line.includes('reports that environment.outside.humidity has timed out')))
+    env.plugin.stop()
+  })
+
+  it('is reported again with the next value', async () => {
+    const env = createEnv({ live: false })
+    env.plugin.start(config())
+    env.timeOut('environment.outside.humidity')
+    await advance(WARM_UP_MS)
+    env.emit('environment.outside.humidity', 0.7)
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(lastParams(env).rh, '70')
+    env.plugin.stop()
+  })
+
+  it('holds back the station update when it is the position', async () => {
+    const env = createEnv({ live: false })
+    env.plugin.start(config())
+    env.timeOut('navigation.position')
+    await advance(WARM_UP_MS)
+    assert.deepEqual(env.requests.map((r) => r.method), ['GET'])
+    assert.ok(env.debugLines.includes('Station update not sent: the Signal K server reports that navigation.position has timed out'))
+    env.plugin.stop()
+  })
+
+  it('is ignored when the latest value came from another source of the path', async () => {
+    const env = createEnv({ live: false })
+    env.plugin.start(config())
+    env.timeOut('environment.outside.humidity', 'second-sensor')
+    await advance(WARM_UP_MS)
+    assert.equal(lastParams(env).rh, '65')
+    env.plugin.stop()
+  })
+
+  it('does not take away the value of another source when it is a plain null', async () => {
+    const env = createEnv({ live: false })
+    env.plugin.start(config())
+    for (const subscription of env.subscriptions) {
+      subscription.callback({ context: 'vessels.self', updates: [{ $source: 'second-sensor', timestamp: new Date().toISOString(), values: [{ path: 'environment.outside.humidity', value: null }] }] })
+    }
+    await advance(WARM_UP_MS)
+    assert.equal(lastParams(env).rh, '65')
+    env.plugin.stop()
+  })
+
+  it('counts as stale even when the age check is switched off', async () => {
+    const env = createEnv({ live: false })
+    env.plugin.start(config(logic({ maxAge: 0 })))
+    env.timeOut('environment.outside.temperature')
+    await advance(WARM_UP_MS)
+    assert.ok(!('temp' in lastParams(env)))
+    assert.match(env.lastStatus(), / T:- /)
     env.plugin.stop()
   })
 })

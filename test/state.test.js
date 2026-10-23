@@ -12,13 +12,64 @@ const {
   START_TIME, WARM_UP_MS, FIVE_MINUTES_MS,
   config, createEnv, deferred, advance, settle, setUp, tearDown
 } = require('../test-support/harness')
+const { resolveOptions } = require('../lib/schema')
+const { stationKey } = require('../lib/windy')
 
 const readState = (env) => JSON.parse(fs.readFileSync(env.stateFile, 'utf8'))
 const writeState = (env, state) => fs.writeFileSync(env.stateFile, typeof state === 'string' ? state : JSON.stringify(state))
 
+/** The station settings of a configuration, as the plugin writes them to the state file. */
+const keyOf = (configuration) => stationKey(resolveOptions(configuration))
+
 describe('saving state', () => {
   beforeEach(setUp)
   afterEach(tearDown)
+
+  it('logs a state file that cannot be written and goes on reporting', async () => {
+    const env = createEnv()
+    // A directory where the file should be: every write fails.
+    fs.mkdirSync(env.stateFile)
+    fs.mkdirSync(`${env.stateFile}.tmp`)
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(env.gets().length, 2)
+    assert.ok(env.errorLines.some((line) => line.startsWith('Failed to save state file: ')))
+    env.plugin.stop()
+  })
+
+  it('writes the file directly when the file system refuses to rename over it, and removes the temporary file', async () => {
+    const env = createEnv()
+    const rename = fs.renameSync
+    fs.renameSync = () => { throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' }) }
+    try {
+      env.plugin.start(config())
+      await advance(WARM_UP_MS)
+    } finally {
+      fs.renameSync = rename
+    }
+    assert.equal(readState(env).hasReportedPosition, true)
+    assert.ok(!fs.existsSync(`${env.stateFile}.tmp`))
+    env.plugin.stop()
+  })
+
+  it('keeps the earlier file whole when writing the new one fails', () => {
+    const { saveState, loadState, freshState } = require('../lib/state')
+    const env = createEnv()
+    const state = { ...freshState(), lastSentPos: { lat: 1, lon: 2 }, hasReportedPosition: true }
+    saveState(env.stateFile, state)
+    const write = fs.writeFileSync
+    fs.writeFileSync = (file, ...rest) => {
+      if (String(file).endsWith('.tmp')) throw new Error('ENOSPC: no space left on device')
+      return write(file, ...rest)
+    }
+    try {
+      assert.throws(() => saveState(env.stateFile, { ...state, lastSentPos: { lat: 3, lon: 4 } }), /ENOSPC/)
+    } finally {
+      fs.writeFileSync = write
+    }
+    assert.deepEqual(loadState(env.stateFile, () => {}).lastSentPos, { lat: 1, lon: 2 })
+  })
 
   it('writes the baseline, the distance, the schedule and the first-run flag when the plugin stops', async () => {
     const env = createEnv()
@@ -117,10 +168,21 @@ describe('starting from a saved state', () => {
 
   it('does not update the station again when the position was already reported and the vessel has not moved', async () => {
     const env = createEnv()
-    writeState(env, { lastSentPos: { lat: 37.5, lon: 23.4 }, currentDistance: 0, nextRunTime: 0, hasReportedPosition: true })
+    writeState(env, { lastSentPos: { lat: 37.5, lon: 23.4 }, currentDistance: 0, nextRunTime: 0, hasReportedPosition: true, stationKey: keyOf(config()) })
     env.plugin.start(config())
     await advance(WARM_UP_MS)
     assert.deepEqual(env.requests.map((r) => r.method), ['GET'])
+    env.plugin.stop()
+  })
+
+  it('updates the station once after an update from a version that did not record the station settings', async () => {
+    const env = createEnv()
+    writeState(env, { lastSentPos: { lat: 37.5, lon: 23.4 }, currentDistance: 0, nextRunTime: 0, hasReportedPosition: true })
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    await advance(FIVE_MINUTES_MS)
+    assert.deepEqual(env.requests.map((r) => r.method), ['PUT', 'GET', 'GET'])
+    assert.equal(readState(env).stationKey, keyOf(config()))
     env.plugin.stop()
   })
 

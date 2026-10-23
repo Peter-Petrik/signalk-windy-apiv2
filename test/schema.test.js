@@ -48,6 +48,10 @@ describe('configuration schema', () => {
     assert.equal(sections.logic.properties.interval.default, 5)
   })
 
+  it('does not allow a reporting interval longer than one day', () => {
+    assert.equal(sections.logic.properties.interval.maximum, 1440)
+  })
+
   it('asks for the reporting interval as a whole number of minutes', () => {
     assert.equal(sections.logic.properties.interval.type, 'integer')
   })

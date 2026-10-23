@@ -215,20 +215,67 @@ describe('values outside the range Windy accepts', () => {
     env.plugin.stop()
   })
 
-  it('does not take a wind sample beyond the gust range as the peak', async () => {
-    const tree = fullTree()
-    delete tree.environment.wind.gust
-    const env = createEnv({ tree })
-    env.plugin.start(config())
-    env.emit('environment.wind.speedOverGround', 9.0)
-    env.emit('environment.wind.speedOverGround', 5000)
-    await advance(WARM_UP_MS)
-    assert.equal(env.gets()[0].params.gust, '9.0')
-    env.plugin.stop()
+  it('does not take a wind sample beyond the wind range as the peak, even one inside the gust range', async () => {
+    for (const glitch of [250, 5000]) {
+      const tree = fullTree()
+      delete tree.environment.wind.gust
+      const env = createEnv({ tree })
+      env.plugin.start(config())
+      env.emit('environment.wind.speedOverGround', 9.0)
+      env.emit('environment.wind.speedOverGround', glitch)
+      env.emit('environment.wind.speedOverGround', 5.0)
+      await advance(WARM_UP_MS)
+      assert.equal(env.gets()[0].params.gust, '9.0', `sample of ${glitch} m/s`)
+      env.plugin.stop()
+    }
   })
 
-  it('folds a negative or oversized wind direction into 0 to 359', async () => {
-    const cases = [[-0.5, '331'], [-Math.PI / 2, '270'], [3 * Math.PI, '180'], [-2 * Math.PI, '0']]
+  it('checks the value as it is sent, after rounding', async () => {
+    // A humidity sensor in fog reads a little over 100 %. Rounded, that is
+    // 100, which Windy accepts.
+    const tree = fullTree()
+    tree.environment.wind.speedOverGround.value = 200.04
+    tree.environment.wind.gust.value = 300.04
+    tree.environment.outside.humidity.value = 1.004
+    tree.environment.outside.pressure.value = 150000.4
+    tree.environment.outside.temperature.value = 373.19
+    const { params } = await observationFor(tree)
+    assert.equal(params.wind, '200.0')
+    assert.equal(params.gust, '300.0')
+    assert.equal(params.rh, '100')
+    assert.equal(params.pressure, '150000')
+    assert.equal(params.temp, '100.0')
+  })
+
+  it('leaves out a value that is outside the range once rounded', async () => {
+    const tree = fullTree()
+    tree.environment.wind.speedOverGround.value = 200.06
+    tree.environment.wind.gust.value = 300.06
+    tree.environment.outside.humidity.value = 1.006
+    tree.environment.outside.pressure.value = 150000.6
+    tree.environment.outside.temperature.value = 373.21
+    const { params } = await observationFor(tree)
+    for (const name of ['wind', 'rh', 'pressure', 'temp']) assert.ok(!(name in params), `${name} was sent`)
+    // The gust path is out of range, and no peak was observed: no gust.
+    assert.ok(!('gust' in params))
+  })
+
+  it('leaves out a wind direction that cannot be an angle in radians', async () => {
+    // 270 is a direction in degrees published without conversion.
+    for (const value of [3 * Math.PI, -3 * Math.PI, 270]) {
+      const tree = fullTree()
+      tree.environment.wind.directionTrue.value = value
+      const env = createEnv({ tree })
+      env.plugin.start(config())
+      await advance(WARM_UP_MS)
+      assert.ok(!('winddir' in env.gets()[0].params), `${value} was sent`)
+      assert.match(env.lastStatus(), / D:- /)
+      env.plugin.stop()
+    }
+  })
+
+  it('folds a negative wind direction, or one of a full turn, into 0 to 359', async () => {
+    const cases = [[-0.5, '331'], [-Math.PI / 2, '270'], [2 * Math.PI, '0'], [-2 * Math.PI, '0'], [2 * Math.PI - 0.001, '0']]
     for (const [radians, degrees] of cases) {
       const tree = fullTree()
       tree.environment.wind.directionTrue.value = radians

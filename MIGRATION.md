@@ -1,6 +1,6 @@
 # Migrating from signalk-windy to signalk-windy-apiv2
 
-This guide covers switching from the legacy [signalk-windy](https://github.com/Saillogger/signalk-windy-plugin) plugin (by Saillogger/itemir) to signalk-windy-apiv2.
+This guide covers switching from the legacy [signalk-windy](https://github.com/Saillogger/signalk-windy-plugin) plugin (by Saillogger/itemir), listed in the Signal K admin UI as "SignalK Windy.com", to signalk-windy-apiv2.
 
 ## Why Migrate
 
@@ -16,12 +16,13 @@ The v2 API uses a different authentication structure than v1.
 |--|-------------|------------------|
 | **API Key** | Single key used for all requests | Global API Key — used for station metadata updates (PUT) |
 | **Station Password** | Not required | Required — used for observation submissions (GET) |
-| **Station ID** | Required | Required (same ID, no change) |
+| **Station ID** | A number, 100 by default | The station's ID on stations.windy.com, such as `f0123456` |
+
+The legacy plugin's **Windy.com Station ID** is a number, which it sends to the legacy API together with its API key. It is not the Station ID of the v2 API, which is a string such as `f0123456`, and does not carry over.
 
 To find the new credentials, log in to [stations.windy.com](https://stations.windy.com):
 - **API Key**: Created on the API Keys page.
-- **Station Password**: Shown on the station detail page of each registered station.
-- **Station ID**: Same ID used with the legacy plugin (e.g., `f0123456`).
+- **Station ID** and **Station Password**: Shown on the station's **Connection** tab under **My Stations**.
 
 ### Signal K Path Differences
 
@@ -39,10 +40,9 @@ To find the new credentials, log in to [stations.windy.com](https://stations.win
 
 ### Features Not in the Legacy Plugin
 
-These are available after migration with no additional configuration:
+These are available after migration with no additional configuration. Both plugins send the highest wind speed between two reports as the gust.
 
 - **Movement Guard** — radius-based position tracking that only updates the Windy map when the vessel moves beyond a configurable threshold (default 300m). Prevents unnecessary API calls and map pin jitter while at anchor.
-- **Peak Gust Tracking** — captures the highest wind speed reading between reporting intervals at 1Hz, ensuring short-lived gusts are not missed.
 - **State Persistence** — the reporting timer, movement baseline, and distance tracking are saved after every reporting cycle and survive plugin restarts, server restarts and reboots.
 - **Dashboard Heartbeat** — live countdown to next report with current sensor readings and distance from baseline.
 - **Stale Reading Protection** — a reading from a sensor that has stopped updating is left out of the report after 15 minutes (configurable).
@@ -50,23 +50,23 @@ These are available after migration with no additional configuration:
 
 ## Migration Steps
 
-1. **Note existing settings.** Open the legacy plugin configuration and record the API Key and Station ID. The Station ID carries over; the API Key may or may not be the same as the v2 Global API Key.
+1. **Note existing settings.** Open the legacy plugin configuration and record its settings for reference. Neither its API key nor its Station ID is needed by this plugin.
 
-2. **Collect v2 credentials.** Log in to [stations.windy.com](https://stations.windy.com) and locate the Global API Key (API Keys page) and Station Password (station details). These are separate from the legacy API key.
+2. **Collect v2 credentials.** Log in to [stations.windy.com](https://stations.windy.com) and locate the Global API Key (API Keys page), and the Station ID and Station Password (the station's **Connection** tab under **My Stations**).
 
-3. **Install signalk-windy-apiv2.** In the Signal K admin UI, open **Apps & Plugins > Store** and search for `signalk-windy-apiv2`. Install the plugin and restart the Signal K server.
+3. **Disable the legacy plugin.** In **Apps & Plugins > Configuration**, select "SignalK Windy.com" and disable it, so that the two plugins never report at the same time. It can be uninstalled in **Apps & Plugins > Store** once the new plugin is confirmed working.
 
-4. **Configure the new plugin.** Open **Apps & Plugins > Configuration**, select "Windy API v2 Reporter", and enter:
-   - Station ID (same as before)
-   - Station Password (new for v2)
+4. **Install signalk-windy-apiv2.** In the Signal K admin UI, open **Apps & Plugins > Store** and search for `signalk-windy-apiv2`. Install the plugin and restart the Signal K server.
+
+5. **Configure the new plugin.** Open **Apps & Plugins > Configuration**, select "Windy API v2 Reporter", and enter:
+   - Station ID (from the Connection tab)
+   - Station Password (from the Connection tab)
    - Global API Key (from the API Keys page)
    - Display Name (the name shown on the Windy map)
 
-   Then click **Save Configuration** below the form. Saving the configuration for the first time also enables the plugin.
+   Review the rest of **Vessel Identity & Sensors** as well before saving: the first report sends the whole station record, which replaces the name, station type, website, share option, sensor heights and elevation shown on Windy, and removes an operator logo uploaded there (see [Known Limitations](README.md#known-limitations)). Then click **Save Configuration** below the form. Saving the configuration for the first time also enables the plugin.
 
-5. **Check path overrides.** If the vessel provides `environment.wind.directionGround` instead of `directionTrue`, open the "Sensor Path Overrides" section and update the Wind Direction path. The other defaults match the paths the legacy plugin reads.
-
-6. **Disable the legacy plugin.** In **Apps & Plugins > Configuration**, disable signalk-windy to prevent both plugins from reporting simultaneously. The legacy plugin can be uninstalled in **Apps & Plugins > Store** once the new plugin is confirmed working.
+6. **Check path overrides.** If the vessel provides `environment.wind.directionGround` instead of `directionTrue`, open the "Sensor Path Overrides" section and update the Wind Direction path. The other defaults match the paths the legacy plugin reads.
 
 7. **Verify operation.** After enabling the new plugin, check the Signal K dashboard for the heartbeat status showing sensor readings and countdown. Confirm the station appears on [windy.com](https://www.windy.com) with current data.
 

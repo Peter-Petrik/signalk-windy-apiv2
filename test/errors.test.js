@@ -26,11 +26,13 @@ describe('rate limit (HTTP 429)', () => {
     }
     env.plugin.start(config())
     await advance(WARM_UP_MS)
-    await advance(89999)
+    // Two seconds after the moment Windy named, so that a clock slightly
+    // ahead of Windy's does not retry too early.
+    await advance(91999)
     assert.equal(env.gets().length, 1)
     await advance(1)
     assert.equal(env.gets().length, 2)
-    assert.equal(env.gets()[1].at - env.gets()[0].at, 90000)
+    assert.equal(env.gets()[1].at - env.gets()[0].at, 92000)
     assert.deepEqual(env.errors, [])
     env.plugin.stop()
   })
@@ -45,7 +47,7 @@ describe('rate limit (HTTP 429)', () => {
     }
     env.plugin.start(config())
     await advance(WARM_UP_MS)
-    await advance(90000)
+    await advance(92000)
     await advance(FIVE_MINUTES_MS - 1)
     assert.equal(env.gets().length, 2)
     await advance(1)
@@ -195,7 +197,7 @@ describe('station update rejected', () => {
     env.put = async () => { throw httpError(400, { message: ['elev_m must be an integer number'], error: 'Bad Request', statusCode: 400 }) }
     env.plugin.start(config())
     await advance(WARM_UP_MS)
-    assert.deepEqual(env.errors, ['Metadata update failed (400)'])
+    assert.deepEqual(env.errors, ['Metadata update failed (400): elev_m must be an integer number'])
     env.plugin.stop()
   })
 

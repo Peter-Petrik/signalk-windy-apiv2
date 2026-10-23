@@ -225,6 +225,35 @@ describe('movement guard', () => {
     env.plugin.stop()
   })
 
+  it('measures from the position Windy accepted last, not from the one before', async () => {
+    const env = await started()
+    // 334 m north: the station is moved there.
+    env.tree.navigation.position.value = { latitude: 37.503, longitude: 23.4 }
+    env.emit('navigation.position', { latitude: 37.503, longitude: 23.4 })
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(env.puts().length, 2)
+    // Back to 56 m from the first position, 278 m from the second: inside
+    // the threshold only when measured from the second.
+    env.tree.navigation.position.value = { latitude: 37.5005, longitude: 23.4 }
+    env.emit('navigation.position', { latitude: 37.5005, longitude: 23.4 })
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(env.puts().length, 2)
+    assert.match(env.lastStatus(), /Δ278m/)
+    env.plugin.stop()
+  })
+
+  it('measures the short way across the 180° meridian, from west to east', async () => {
+    const tree = fullTree()
+    tree.navigation.position.value = { latitude: 0, longitude: -179.999 }
+    const env = createEnv({ tree })
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    env.emit('navigation.position', { latitude: 0, longitude: 179.999 })
+    await advance(1000)
+    assert.match(env.lastStatus(), /Δ223m/)
+    env.plugin.stop()
+  })
+
   it('keeps the distance when the station update fails, and tries again on the next cycle', async () => {
     const env = await started()
     env.put = async () => { throw new Error('socket hang up') }
@@ -235,6 +264,28 @@ describe('movement guard', () => {
     assert.match(env.lastStatus(), /Δ334m/)
     await advance(FIVE_MINUTES_MS)
     assert.equal(env.puts().length, 3)
+    env.plugin.stop()
+  })
+})
+
+describe('requests to Windy', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('are sent with redirects switched off, an answer limit of 64 KB and an overall time limit of 30 seconds', async () => {
+    const env = createEnv()
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.equal(env.requests.length, 2)
+    for (const request of env.requests) {
+      assert.equal(request.config.maxRedirects, 0, request.method)
+      assert.equal(request.config.maxContentLength, 65536, request.method)
+      assert.equal(request.config.timeout, 30000, request.method)
+      assert.ok(request.config.signal instanceof AbortSignal, request.method)
+    }
+    // Each request has a signal of its own, so that one that has ended does
+    // not end the next.
+    assert.notEqual(env.requests[0].config.signal, env.requests[1].config.signal)
     env.plugin.stop()
   })
 })

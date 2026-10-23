@@ -104,6 +104,15 @@ describe('package.json', () => {
   })
 })
 
+describe('published documents', () => {
+  it('hold no placeholder left from editing', () => {
+    for (const file of ['README.md', 'CHANGELOG.md', 'MIGRATION.md', 'CONTRIBUTING.md']) {
+      const text = fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
+      assert.doesNotMatch(text, /@@|TODO|TBD|<unknown/, file)
+    }
+  })
+})
+
 describe('CHANGELOG.md', () => {
   const headings = changelog.split('\n').filter((line) => line.startsWith('## '))
 

@@ -60,7 +60,7 @@ npm test
 
 This checks the syntax of `index.js` and runs the test suite with the Node.js built-in test runner. No extra packages are needed.
 
-The tests drive the plugin the way the Signal K server does: through the `app` object, through `start()` and `stop()`, and through the passage of time. The two requests to Windy are intercepted, so no test contacts Windy, and the clock is controlled, so a five-minute reporting cycle takes no time. The harness delivers values the way the server's subscriptions do: the value held for each path at the moment of subscribing, then one delivery per update. By default it repeats every value once a minute, as working sensors do; `createEnv({ live: false })` gives sensors that have stopped.
+The tests drive the plugin the way the Signal K server does: through the `app` object, through `start()` and `stop()`, and through the passage of time. The two requests to Windy are intercepted, so no test contacts Windy, and the clock is controlled, so a five-minute reporting cycle takes no time. The harness delivers values the way the server's subscriptions do: the value held for each path at the moment of subscribing, then one delivery per update. By default it repeats every value once a minute, as working sensors do; `createEnv({ live: false })` gives sensors that have stopped. `env.dashboard()` returns the dashboard line and its Last Error, kept the way the server keeps them.
 
 | File | Covers |
 | :--- | :--- |
@@ -68,9 +68,11 @@ The tests drive the plugin the way the Signal K server does: through the `app` o
 | `test/conversions.test.js` | Unit conversion, missing values, the gust rule, path overrides |
 | `test/robustness.test.js` | Values that are not numbers, out-of-range readings, positions without coordinates, a cycle that fails |
 | `test/settings.test.js` | Zero values, defaults without the form, the share option, Force GPS Updates, station elevation, the humidity path |
-| `test/stale.test.js` | Stale readings, values held by the server at start, the no-data line, wind and gust from the same samples |
+| `test/stale.test.js` | Stale readings, paths the server declares timed out, values held by the server at start, the no-data line, wind and gust from the same samples, the peak |
 | `test/lifecycle.test.js` | Starting without credentials, stopping during a request, release of subscriptions |
 | `test/errors.test.js` | Rate limits, rejected requests, network errors, dashboard messages |
+| `test/dashboard.test.js` | How long an error stays on the dashboard and what becomes its Last Error, Windy out of reach, the time and the countdown |
+| `test/station-record.test.js` | The station record sent again after a change of the settings it is built from |
 | `test/state.test.js` | The state file and restarts |
 | `test/schema.test.js` | The configuration form |
 | `test/package.test.js` | App Store metadata in `package.json` and the format of `CHANGELOG.md` |
@@ -94,7 +96,7 @@ This runs `integration/server-check.js` against a running Signal K server that h
 
 ## Releases
 
-A release is a commit that sets the version in `package.json` and in the header of `index.js` and adds the matching `## [x.y.z] - YYYY-MM-DD` section to `CHANGELOG.md`, followed by a tag `vx.y.z`. Pushing the tag runs the publish workflow, which runs the tests, checks that the tag matches `package.json`, creates the GitHub Release from the changelog section, and publishes to npm.
+A release is a commit that sets the version in `package.json`, in `package-lock.json` (the top-level `version` and `packages[""].version`) and in the header of `index.js`, and adds the matching `## [x.y.z] - YYYY-MM-DD` section to `CHANGELOG.md` with its comparison link at the end of the file, followed by a tag `vx.y.z`. Pushing the tag runs the publish workflow, which runs the tests, checks that the tag matches `package.json`, creates the GitHub Release from the changelog section, and publishes to npm.
 
 ## Code Style
 

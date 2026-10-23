@@ -141,11 +141,23 @@ function createEnv (options = {}) {
     // The plugin is not meant to read the data tree; this counts if it does.
     treeReads: 0,
     put: options.put || (async () => ({ status: 200, data: {} })),
-    get: options.get || (async () => ({ status: 200, data: {} }))
+    get: options.get || (async () => ({ status: 200, data: {} })),
+    // The plugin's entry on the dashboard, kept as the server keeps it (see
+    // setStatus below).
+    board: { type: null, message: null, lastError: null }
+  }
+
+  // As doSetProviderStatus in the server's src/index.ts: an error that is
+  // replaced by a different message, of either kind, becomes the "Last
+  // Error". The same error set again changes nothing.
+  const setStatus = (type, message) => {
+    if (env.board.type === 'error' && env.board.message !== message) env.board.lastError = env.board.message
+    env.board.type = type
+    env.board.message = message
   }
 
   axios.put = async (url, body, requestConfig = {}) => {
-    env.requests.push({ method: 'PUT', url, body, headers: requestConfig.headers || {}, timeout: requestConfig.timeout, at: Date.now() })
+    env.requests.push({ method: 'PUT', url, body, headers: requestConfig.headers || {}, timeout: requestConfig.timeout, config: requestConfig, at: Date.now() })
     return env.put(url, body, requestConfig)
   }
   axios.get = async (url, requestConfig = {}) => {
@@ -157,6 +169,7 @@ function createEnv (options = {}) {
       params: Object.fromEntries(parsed.searchParams),
       headers: requestConfig.headers || {},
       timeout: requestConfig.timeout,
+      config: requestConfig,
       at: Date.now()
     })
     return env.get(url, requestConfig)
@@ -168,8 +181,8 @@ function createEnv (options = {}) {
       env.treeReads++
       return nodeAt(env.tree, skPath)
     },
-    setPluginStatus: (message) => env.statuses.push(message),
-    setPluginError: (message) => env.errors.push(message),
+    setPluginStatus: (message) => { env.statuses.push(message); setStatus('status', message) },
+    setPluginError: (message) => { env.errors.push(message); setStatus('error', message) },
     debug: (message) => env.debugLines.push(String(message)),
     error: (...parts) => env.errorLines.push(parts.join(' ')),
     subscriptionmanager: {
@@ -211,6 +224,23 @@ function createEnv (options = {}) {
     }
   }
 
+  /**
+   * Declares a path timed out, as a server with "enforce data timeouts"
+   * switched on does: null, marked as timed out, delivered to every
+   * subscription that asked for the path.
+   */
+  env.timeOut = (skPath, source = 'test') => {
+    const timestamp = new Date().toISOString()
+    for (const subscription of [...env.subscriptions]) {
+      if (subscription.paths.includes(skPath)) {
+        subscription.callback({
+          context: 'vessels.self',
+          updates: [{ $source: source, timestamp, values: [{ path: skPath, value: null, state: { timedOut: true } }] }]
+        })
+      }
+    }
+  }
+
   /** Puts a value into the server's store with a given age, without delivering it. */
   env.hold = (skPath, value, ageMs) => {
     const keys = skPath.split('.')
@@ -228,6 +258,8 @@ function createEnv (options = {}) {
   env.puts = () => env.requests.filter((r) => r.method === 'PUT')
   env.gets = () => env.requests.filter((r) => r.method === 'GET')
   env.lastStatus = () => env.statuses[env.statuses.length - 1]
+  /** What the dashboard shows now: { type, message, lastError }. */
+  env.dashboard = () => ({ ...env.board })
 
   return env
 }

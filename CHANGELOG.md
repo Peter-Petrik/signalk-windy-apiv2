@@ -5,6 +5,41 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-10-23
+
+### Added
+- **Lost Connection Shown on the Dashboard**: While Windy cannot be reached, the dashboard line shows `No connection to Windy since HH:MM` in place of the readings of the last report, with the time the first failure became known; `No answer from Windy` and `Answer from Windy too large` name a request that ran out of time and an answer too large to read. The line is kept across a restart of the plugin until Windy answers again. Before, the line went on showing the last readings and their time as if nothing had happened. It is a plain status, not an error, as a lost connection at sea is routine and clears by itself.
+
+### Changed
+- **Gateway Answers Treated as a Lost Connection**: An answer of 408 or 502 to 599 is what a gateway or proxy in front of Windy sends when it gets no answer from Windy, and Windy itself has not been seen to send one. Such an answer is now shown as `Windy not available (503) since HH:MM` without turning the dashboard red. A 500 is still shown as an error, since the request may have caused it.
+- **Windy's Reason for a Refused Station Update**: `Metadata update failed (400)` is followed by Windy's own explanation, as `Observation failed` already was.
+- **Shorter Answers in the Dashboard and the Log**: At most 200 characters of an answer from Windy are shown on the dashboard and at most 500 are logged. An HTML page in place of an answer is shown as `(HTML page)`. Before, an error page of several thousand characters went onto the dashboard and into the log on every cycle.
+- **Retry After a Rate Limit**: After a 429, the observation is sent again 2 seconds after the moment Windy names in `retry_after`, not at that moment. A retry made at that moment by a clock slightly ahead of Windy's would be refused again, and the second refusal would name a moment already passed, which costs a whole interval.
+- **Reporting Interval Limited to One Day**: The form accepts at most 1440 minutes, and a longer interval saved by hand is treated as 1440.
+- **Wind Direction Checked**: A wind direction beyond ±2π is not an angle in radians, for example a direction in degrees published without conversion. It is now left out and shown with a dash; before, it was folded into 0 to 359 and reported as a direction no instrument measured.
+- **Migration Guide Corrected**: The legacy plugin's Station ID is a number, 100 by default, and not the Station ID of the v2 API, as the guide said. The guide now says where the v2 Station ID and Station Password are shown, has the legacy plugin disabled before the new one is configured, says that the first report replaces the whole station record on Windy, and no longer lists the peak gust as new, since the legacy plugin has one too.
+- **README**: The Known Limitations name everything a station update replaces on Windy, the effect of several sources on one path, and the reach of the Global API Key. The station record section lists every reason for a station update. New notes cover the altitude NMEA 2000 receivers report, the debug log, and where Windy shows the Station ID and Station Password. The Compatibility table lists the Signal K servers this release was run on, and that Signal K server 2.24.0 and later require Node.js 22.
+- **Changelog Links**: The link for 1.0.0 pointed to a comparison with a tag that does not exist, and a link for an Unreleased section was left over; contributors are named without @-mentions.
+- **Plugin CI**: The integration check runs against Signal K server 2.32.0, 2.33.0 and the latest release.
+
+### Fixed
+- **Station Record Sent After a Change of Settings**: A change to the Display Name, Share Option, a sensor height, the Station Type, the Operator Website URL, the Station Elevation or the Station ID reached Windy only when the vessel next moved beyond the movement threshold; at anchor, not at all. The settings of the last station update Windy accepted are now kept in `state.json`, and a change is sent at the next report, unless the position is stale or unusable or the share option is not one Windy accepts, which hold back every station update. The first report after this update sends the station record once, even at anchor. Like every station update, it replaces the whole record on Windy: details edited at stations.windy.com go back to the plugin's settings, and an operator logo uploaded there is removed. A station update Windy refuses is sent again, and its refusal logged, at every report until Windy accepts it or no update is due any more.
+- **Refused Requests Stay on the Dashboard**: An error such as `Windy rejected the Global API Key (403)` was replaced within a second by the status of the next step, so it never showed as current and was found only under Last Error. It now stays on the dashboard until the cause is gone: a refused station update until an update succeeds or none is due any more, a refused observation until Windy accepts or answers the next one. While an error is shown, the line holds neither the countdown nor the readings, because the server moves every changed error text to Last Error, and an error repeated with a new countdown every second pushed the real error out of that column. When several errors apply, they are shown together, separated by `|`. The Share Option message shows no countdown either.
+- **Gust Samples During a Report**: Wind samples that arrived while a report was on its way to Windy were discarded when the report succeeded. They now begin the next peak.
+- **Gust After a Long Failure**: After reports had failed for longer than the peak may be old, a peak from before the failure blocked every lower sample, and the next report had no peak at all. A peak too old to be reported is now replaced by the next sample.
+- **Wind Samples Beyond the Wind Range**: A wind sample above 200 m/s, outside the range Windy accepts for the wind, could still become the gust. It is now ignored like any other glitch.
+- **Values Checked as They Are Sent**: The range check was made before rounding, so a humidity of 100.4 % in fog was left out although Windy accepts the 100 that is sent. Each value is now checked after rounding.
+- **No Data Line After Readings Return**: When readings came back after a cycle with nothing to send but the next report did not reach Windy, the dashboard went on saying `No data` until a report succeeded.
+- **Countdown After a Change of the System Clock**: A clock set forward while the plugin ran, as when a computer gets the time after a start, froze the countdown until the next report. The countdown now runs on the timer.
+- **Time on Node.js 20**: The time of the last report showed `24:05` for five minutes past midnight on Node.js 20. It is now formatted by the plugin and reads `00:05` on every Node.js version and in every locale.
+- **Interval of More Than About 24.8 Days**: Node.js runs a timer longer than that after 1 millisecond, so such an interval made the plugin report without pause.
+- **Readings Timed Out by the Server**: A Signal K server with data timeouts enforced publishes `null` for a path whose source has stopped. Such a reading is now treated as stale and shown with a dash, as the plugin's own age check does, and a timed-out position holds back the station update. The timeout applies only when the latest value came from the source that stopped; a value from another source of the path stays current, and so it does when another source publishes a plain `null`. On a server with several position sources, a timed-out source had taken away the live position and held back the station update.
+
+### Security
+- **No Redirects Followed**: On a redirect to another host, axios forwards every header except `Authorization`, `Proxy-Authorization` and `Cookie`, so the Global API Key in the `windy-api-key` header would have gone with it. Windy's API does not redirect, and a redirect is now reported as a failed request.
+- **Limits on Each Request**: A request ends after 30 seconds whatever happens; before, the 30-second limit applied only while the connection was idle, so an answer arriving byte by byte could hold the reporting cycle indefinitely. An answer larger than 64 KB is not read.
+- **axios 1.20.0 or Later**: The dependency range now starts at axios 1.20.0. Every earlier version has published security advisories, and the earlier range of `^1.6.0` allowed any of them.
+
 ## [1.6.4] - 2026-10-13
 
 ### Changed
@@ -110,7 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **README Reset Documentation**: Replaced the "Manual Reset" section with "Restart vs Full Reset", clarifying the distinction between a plugin restart (Submit — preserves state) and a full reset (deleting `state.json` — clears movement baseline and forces position re-establishment on Windy).
 
 ### Fixed
-- **Force GPS Updates Not Working ([#8](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/8))**: The "Force GPS Updates" configuration toggle was only applied on the very first reporting cycle after a cold start with no saved state. On all subsequent cycles — and on every resume from saved state (including after a configuration save) — the toggle was silently ignored. The root cause was a `force` parameter on the internal `reportToWindy` function that only one of three call sites passed correctly. The fix removes the redundant parameter and reads the `forceUpdate` setting directly from the options object, ensuring the toggle works on every reporting cycle in every code path. Reported by @CruisingSpirit.
+- **Force GPS Updates Not Working ([#8](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/8))**: The "Force GPS Updates" configuration toggle was only applied on the very first reporting cycle after a cold start with no saved state. On all subsequent cycles — and on every resume from saved state (including after a configuration save) — the toggle was silently ignored. The root cause was a `force` parameter on the internal `reportToWindy` function that only one of three call sites passed correctly. The fix removes the redundant parameter and reads the `forceUpdate` setting directly from the options object, ensuring the toggle works on every reporting cycle in every code path. Reported by CruisingSpirit.
 
 ## [1.3.2] - 2026-03-13
 
@@ -137,7 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - 2026-02-17
 
 ### Fixed
-- **Station Offline When Underway ([#4](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/4))**: Restructured the reporting cycle to send the station metadata PUT before the observation GET. Previously, the observation could land against the old station position when the vessel was moving, causing Windy to mark the station as offline immediately after a location update. The PUT now completes before the observation is sent, ensuring Windy receives weather data at the newly registered position. Credit to @jaredko2 for the detailed bug report and diagnosis, and @LeaseOnLife for confirming that PUTs do not count against Windy's observation rate limit.
+- **Station Offline When Underway ([#4](https://github.com/Peter-Petrik/signalk-windy-apiv2/issues/4))**: Restructured the reporting cycle to send the station metadata PUT before the observation GET. Previously, the observation could land against the old station position when the vessel was moving, causing Windy to mark the station as offline immediately after a location update. The PUT now completes before the observation is sent, ensuring Windy receives weather data at the newly registered position. Credit to jaredko2 for the detailed bug report and diagnosis, and LeaseOnLife for confirming that PUTs do not count against Windy's observation rate limit.
 
 ### Changed
 - **Explicit Timestamp Parameter**: Switched from `time: 'now'` to `ts` with a Unix epoch value in observation submissions. The `ts` parameter is the confirmed and documented Windy API v2 parameter, verified via live testing. This change also enables future offline queue support where queued observations require real timestamps.
@@ -315,7 +350,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
-[Unreleased]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.0...HEAD
+[1.7.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.4...v1.7.0
 [1.6.4]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.1...v1.6.2
@@ -340,4 +375,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [1.0.3]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v0.1.0...v1.0.0
+[1.0.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/tree/v1.0.0

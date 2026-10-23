@@ -88,6 +88,18 @@ describe('defaults without the form', () => {
     env.plugin.stop()
   })
 
+  it('waits at most a day between reports, whatever interval was saved', async () => {
+    // A timer of more than about 24.8 days runs after 1 millisecond in
+    // Node.js; an interval of 40000 minutes reported without pause.
+    const env = createEnv()
+    env.plugin.start(config({ logic: { interval: 40000, minMove: 300, forceUpdate: false } }))
+    await advance(WARM_UP_MS)
+    await advance(60000)
+    assert.equal(env.gets().length, 1)
+    assert.match(env.lastStatus(), /^Next: 1439m00s /)
+    env.plugin.stop()
+  })
+
   it('keeps a fractional interval saved before the form asked for whole minutes', async () => {
     const env = createEnv()
     env.plugin.start(config({ logic: { interval: 7.5, minMove: 300, forceUpdate: false } }))
@@ -144,10 +156,14 @@ describe('share option', () => {
   it('keeps the reason on the dashboard as an error for a saved "Private"', async () => {
     const env = createEnv()
     env.plugin.start(config(identity({ shareOption: 'private' })))
+    const reason = 'Station position not updated: Share Option "Private" is not accepted by Windy. Choose Public or Windy only in the plugin configuration.'
     await advance(1000)
-    assert.equal(env.errors[env.errors.length - 1], 'Station position not updated: Share Option "Private" is not accepted by Windy. Choose Public or Windy only in the plugin configuration. | Warm: 0m14s')
+    assert.deepEqual(env.dashboard(), { type: 'error', message: reason, lastError: null })
     await advance(WARM_UP_MS + 60000)
-    assert.equal(env.errors[env.errors.length - 1], 'Station position not updated: Share Option "Private" is not accepted by Windy. Choose Public or Windy only in the plugin configuration. | Next: 3m59s')
+    assert.deepEqual(env.dashboard(), { type: 'error', message: reason, lastError: null })
+    // Set once and left in place, so that it does not push a real error out
+    // of "Last Error".
+    assert.equal(env.errors.length, 1)
     // Logged once at start, not once a second.
     assert.equal(env.errorLines.filter((line) => line.includes('Share Option')).length, 1)
     env.plugin.stop()
@@ -161,7 +177,7 @@ describe('share option', () => {
     await advance(WARM_UP_MS)
     assert.equal(env.puts().length, 0)
     assert.equal(env.gets().length, 1)
-    assert.match(env.errors[0], /^Station position not updated: Share Option is not set\. Choose Public or Windy only in the plugin configuration\. \| Warm: /)
+    assert.deepEqual(env.errors, ['Station position not updated: Share Option is not set. Choose Public or Windy only in the plugin configuration.'])
     env.plugin.stop()
   })
 
