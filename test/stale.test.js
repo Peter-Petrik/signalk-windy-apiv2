@@ -334,16 +334,19 @@ describe('wind and gust', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 
-  it('come from the same samples: the latest one is the wind, the highest one the gust', async () => {
+  it('come from the same samples: the mean of the interval is the wind, the highest sample the gust', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree })
     env.plugin.start(config())
     env.emit('environment.wind.speedOverGround', 6.0)
+    await advance(5000)
     env.emit('environment.wind.speedOverGround', 9.0)
-    env.emit('environment.wind.speedOverGround', 4.0)
-    await advance(WARM_UP_MS)
-    assert.equal(lastParams(env).wind, '4.0')
+    await advance(5000)
+    env.emit('environment.wind.speedOverGround', 3.0)
+    await advance(WARM_UP_MS - 10000)
+    // 6, 9 and 3 m/s for 5 s each.
+    assert.equal(lastParams(env).wind, '6.0')
     assert.equal(lastParams(env).gust, '9.0')
     env.plugin.stop()
   })
@@ -381,7 +384,7 @@ describe('wind and gust', () => {
     env.plugin.stop()
   })
 
-  it('report the peak of the whole interval when the age limit is shorter than the interval', async () => {
+  it('are taken over the whole interval when the age limit is shorter than the interval', async () => {
     // Found on a real server: with a limit of 1 minute and reports every 5,
     // a peak from early in the interval was discarded as too old.
     const tree = fullTree()
@@ -393,7 +396,8 @@ describe('wind and gust', () => {
     await advance(30000)
     env.emit('environment.wind.speedOverGround', 5.0)
     await advance(FIVE_MINUTES_MS - 30000)
-    assert.equal(lastParams(env).wind, '5.0')
+    // 11 m/s for 30 s and 5 m/s for 270 s.
+    assert.equal(lastParams(env).wind, '5.6')
     assert.equal(lastParams(env).gust, '11.0')
     env.plugin.stop()
   })
@@ -463,7 +467,7 @@ describe('the data tree', () => {
   })
 })
 
-describe('the peak', () => {
+describe('the wind window', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 
@@ -489,7 +493,7 @@ describe('the peak', () => {
     env.plugin.stop()
   })
 
-  it('keeps the higher of the two when a failed report gives its peak back', async () => {
+  it('takes in the samples that arrive while a report that fails is on its way', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree, live: false })
@@ -508,23 +512,50 @@ describe('the peak', () => {
     env.plugin.stop()
   })
 
-  it('is given back when the report is rate limited', async () => {
+  it('reaches back over the time the previous report took to answer', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree, live: false })
-    env.get = async () => { throw httpError(429, {}) }
+    const answer = deferred()
+    env.get = () => answer.promise
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    // Windy takes 20 s to answer; a squall passes meanwhile. The next
+    // interval is counted from the answer.
+    await advance(10000)
+    env.emit('environment.wind.speedOverGround', 16.0)
+    await advance(10000)
+    env.emit('environment.wind.speedOverGround', 5.0)
+    answer.resolve()
+    await settle()
+    env.get = async () => ({ status: 200, data: {} })
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(env.gets().length, 2)
+    assert.equal(lastParams(env).gust, '16.0')
+    env.plugin.stop()
+  })
+
+  it('is the last interval for the retry after a rate limit as well', async () => {
+    const tree = fullTree()
+    delete tree.environment.wind.gust
+    const env = createEnv({ tree, live: false })
+    env.get = async () => { throw httpError(429, { retry_after: new Date(Date.now() + 60000).toISOString() }) }
     env.plugin.start(config())
     env.emit('environment.wind.speedOverGround', 12.0)
-    env.emit('environment.wind.speedOverGround', 5.0)
     await advance(WARM_UP_MS)
     env.get = async () => ({ status: 200, data: {} })
     env.emit('environment.wind.speedOverGround', 5.0)
-    await advance(FIVE_MINUTES_MS)
+    // The retry comes 2 s after the moment Windy named.
+    await advance(62000)
+    assert.equal(env.gets().length, 2)
+    // 12 m/s for 15 s, then 5 m/s for 62 s; the attempt that was refused
+    // does not end the window.
+    assert.equal(lastParams(env).wind, '6.4')
     assert.equal(lastParams(env).gust, '12.0')
     env.plugin.stop()
   })
 
-  it('starts again from the samples after a long failure, instead of being lost', async () => {
+  it('is the last interval after a long failure, in which a value that stood through it counts', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree, live: false })
@@ -532,21 +563,21 @@ describe('the peak', () => {
     env.plugin.start(config())
     env.emit('environment.wind.speedOverGround', 20.0)
     await advance(WARM_UP_MS)
-    // Fifteen minutes without connectivity: the peak of 20 m/s is now too
-    // old to be reported. The samples that follow make the peak of now,
-    // although they are lower.
+    // Fifteen minutes without connectivity, from a sensor that sends only
+    // when its value changes.
     await advance(3 * FIVE_MINUTES_MS - 10000)
     env.emit('environment.wind.speedOverGround', 9.0)
     env.emit('environment.wind.speedOverGround', 6.0)
     refresh(env, SENSOR_PATHS.filter((p) => p !== 'environment.wind.gust' && p !== 'environment.wind.speedOverGround'))
     env.get = async () => ({ status: 200, data: {} })
     await advance(10000)
-    assert.equal(lastParams(env).wind, '6.0')
-    assert.equal(lastParams(env).gust, '9.0')
+    // 20 m/s for 290 s and 6 m/s for 10 s.
+    assert.equal(lastParams(env).wind, '19.5')
+    assert.equal(lastParams(env).gust, '20.0')
     env.plugin.stop()
   })
 
-  it('never expires when the age check is switched off', async () => {
+  it('counts a value that has stood since long before the interval when the age check is switched off', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree, live: false })
@@ -559,7 +590,7 @@ describe('the peak', () => {
     env.emit('environment.wind.speedOverGround', 6.0)
     env.get = async () => ({ status: 200, data: {} })
     await advance(10000)
-    assert.equal(lastParams(env).wind, '6.0')
+    assert.equal(lastParams(env).wind, '19.5')
     assert.equal(lastParams(env).gust, '20.0')
     env.plugin.stop()
   })

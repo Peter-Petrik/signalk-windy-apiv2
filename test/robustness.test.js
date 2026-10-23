@@ -124,7 +124,7 @@ describe('values that are not numbers', () => {
     assert.equal(env.puts()[0].body.elev_m, 5)
   })
 
-  it('does not take a wind sample that is not a number as the peak', async () => {
+  it('does not take a wind sample that is not a number as the gust', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree })
@@ -133,6 +133,7 @@ describe('values that are not numbers', () => {
     env.emit('environment.wind.speedOverGround', '99')
     env.emit('environment.wind.speedOverGround', NaN)
     env.emit('environment.wind.speedOverGround', null)
+    env.emit('environment.wind.speedOverGround', 4.0)
     await advance(WARM_UP_MS)
     assert.equal(env.gets()[0].params.gust, '6.0')
     env.plugin.stop()

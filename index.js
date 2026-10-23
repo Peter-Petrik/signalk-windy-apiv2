@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.7.0 - station record sent after a change of settings, errors kept on the dashboard, lost connection shown, gust and range fixes, request limits
+ * v1.8.0 - wind over the reporting interval, dew point, clock check, position precision, wind path check
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -29,6 +29,7 @@
  *
  *   lib/schema.js    the configuration form and the reading of saved settings
  *   lib/readings.js  the latest value of every subscribed path, with its age
+ *   lib/samples.js   the values of the wind paths over the reporting interval
  *   lib/convert.js   readings to observation fields, with range checks
  *   lib/movement.js  distance from the last position sent to Windy
  *   lib/state.js     loading and saving state.json
@@ -41,7 +42,8 @@ const path = require('node:path')
 
 const { schema, uiSchema, resolveOptions } = require('./lib/schema')
 const { createReadings } = require('./lib/readings')
-const { buildObservation, dashboardText, noDataText, humidityPaths, isNumber, inRange } = require('./lib/convert')
+const { createSamples } = require('./lib/samples')
+const { buildObservation, dashboardText, noDataText, humidityPaths, isNumber, inRange, MAX_DIRECTION_RAD } = require('./lib/convert')
 const { isValidPosition, distanceMeters } = require('./lib/movement')
 const { loadState, saveState } = require('./lib/state')
 const windy = require('./lib/windy')
@@ -50,6 +52,24 @@ const windy = require('./lib/windy')
 const WARM_UP_MS = 15000
 
 const POSITION_PATH = 'navigation.position'
+
+// GNSS time, compared with the system clock. Windy refuses an observation
+// stamped a few minutes ahead of its own clock (tested on a test station,
+// 2026-10-23: 120 s ahead accepted, 300 s ahead refused), and a clock behind
+// stamps every observation with the wrong time.
+const DATETIME_PATH = 'navigation.datetime'
+const CLOCK_TOLERANCE_MS = 60000
+// How long a GNSS time counts when the Maximum Reading Age is 0.
+const CLOCK_DEFAULT_AGE_MS = 15 * 60000
+// A receiver without a fix may publish a time such as the GPS epoch of 1980.
+// A GNSS time before this plugin's release cannot be right and is ignored.
+const EARLIEST_GNSS_TIME = Date.parse('2026-10-01T00:00:00Z')
+
+// The wind window of a report reaches back to where the previous one ended
+// when that lies at most this far before the interval, so that a sample
+// arriving while the previous report was on its way to Windy is not missed.
+// Two requests of at most 30 s each fit.
+const WINDOW_GAP_MS = 2 * 60000
 
 // Where the station elevation comes from when the owner has set none.
 const ALTITUDE_PATHS = ['navigation.gnss.antennaAltitude', 'navigation.altitude']
@@ -133,7 +153,9 @@ module.exports = function (app) {
       s.problems.cycle,
       s.problems.observation,
       s.problems.station,
-      s.options.shareProblem ? `Station position not updated: ${s.options.shareProblem}` : null
+      s.options.shareProblem ? `Station position not updated: ${s.options.shareProblem}` : null,
+      ...s.options.pathProblems,
+      clockProblem(s)
     ].filter(Boolean)
     if (problems.length > 0) {
       show(s, 'error', problems.join(' | '))
@@ -145,6 +167,35 @@ module.exports = function (app) {
     show(s, 'status', detail
       ? `${countdown} | ${movementText(s)} | ${detail}`
       : `${countdown} | ${movementText(s)}`)
+  }
+
+  /**
+   * The difference between the system clock and GNSS time as a dashboard
+   * error, or null. The text names only the direction, so that it stays the
+   * same while the difference wanders by a second. Each source of GNSS time
+   * is judged on its own, and one that agrees with the system clock is
+   * enough: a device that publishes the time of its own clock beside a GNSS
+   * receiver would otherwise turn the error on and off with every message.
+   * A GNSS time that has not been updated within the Maximum Reading Age, or
+   * within 15 minutes when the age check is off, no longer says anything
+   * about the clock.
+   */
+  const clockProblem = (s) => {
+    const limitMs = s.options.maxAge > 0 ? s.options.maxAge * 60000 : CLOCK_DEFAULT_AGE_MS
+    const now = Date.now()
+    let closest = null
+    for (const clock of s.clocks.values()) {
+      if (now - clock.at > limitMs) continue
+      if (closest === null || Math.abs(clock.offsetMs) < Math.abs(closest.offsetMs)) closest = clock
+    }
+    if (closest === null) return null
+    if (closest.offsetMs > CLOCK_TOLERANCE_MS) {
+      return 'System clock is more than 60 s ahead of GNSS time. Windy refuses observations stamped a few minutes ahead of its own clock. Set the clock, for example with the set-system-time plugin.'
+    }
+    if (closest.offsetMs < -CLOCK_TOLERANCE_MS) {
+      return 'System clock is more than 60 s behind GNSS time, so observations carry the wrong time. Set the clock, for example with the set-system-time plugin.'
+    }
+    return null
   }
 
   /** Sets the dashboard line, unless it already shows exactly this. */
@@ -243,15 +294,17 @@ module.exports = function (app) {
       options,
       state: loadState(stateFile(), (line) => app.debug(line)),
       readings: createReadings(),
+      // The recent values of the wind paths, which the wind, the gust and
+      // the direction of a report are taken from.
+      samples: createSamples(options.maxAge * 60000),
+      // When the wind window of the last report ended; null before the first.
+      windowEnd: null,
+      // Per source of GNSS time, { offsetMs, at }: the system clock minus
+      // GNSS time, and when it was last measured.
+      clocks: new Map(),
       timer: null,
       statusTimer: null,
       unsubscribes: [],
-      // The highest wind speed delivered since the last report, and when.
-      peakGust: 0,
-      peakTime: 0,
-      // How old a peak may be and still belong to the next report, or 0 for
-      // no limit. See reportToWindy().
-      peakLimitMs: options.maxAge > 0 ? Math.max(options.maxAge, options.interval) * 60000 : 0,
       // Dashboard text of a cycle in which nothing could be sent, or ''.
       noData: '',
       // What needs the owner's attention, one text per source, or null.
@@ -268,12 +321,15 @@ module.exports = function (app) {
     if (options.shareProblem) {
       app.error(`Station position will not be updated: ${options.shareProblem}`)
     }
+    for (const problem of options.pathProblems) app.error(problem)
 
     // One subscription for everything the plugin reports: the position, the
-    // six sensor paths and the altitude. Every value that arrives is noted
-    // in `s.readings` with the time it came, which is what lets a reading
-    // that has stopped arriving be recognised as stale. Reports are built
-    // from these readings alone, so the wind speed and the gust always come
+    // seven sensor paths, the altitude and the GNSS time. Every value that
+    // arrives is noted in `s.readings` with the time it came, which is what
+    // lets a reading that has stopped arriving be recognised as stale. The
+    // values of the three wind paths are also kept in `s.samples`, for the
+    // mean, the gust and the direction of the reporting interval. Reports
+    // are built from these alone, so the wind speed and the gust always come
     // from the same samples.
     //
     // `period: 1000` asks the server for at most one value per second and
@@ -282,17 +338,30 @@ module.exports = function (app) {
     // The server appends a function to `s.unsubscribes` for each path;
     // stop() calls them. Without that, every restart of the plugin left its
     // subscriptions running for the life of the server process.
-    const windPath = options.pathMap.windSpeed
     const paths = [...new Set([
       POSITION_PATH,
-      windPath,
+      options.pathMap.windSpeed,
       options.pathMap.windGust,
       options.pathMap.windDir,
       options.pathMap.temp,
       options.pathMap.pressure,
       ...humidityPaths(options.pathMap.humidity),
-      ...ALTITUDE_PATHS
+      options.pathMap.dewPoint,
+      ...ALTITUDE_PATHS,
+      DATETIME_PATH
     ])]
+
+    // Which samples of the wind paths are kept. A value outside Windy's
+    // range for its field is a sensor glitch and is not kept: the value
+    // before it goes on standing. A value that is not a number at all marks
+    // a gap.
+    // Listed so that the wind range wins when one path is configured for both
+    // the wind speed and the gust.
+    const plausible = {
+      [options.pathMap.windGust]: (value) => inRange('gust', value),
+      [options.pathMap.windSpeed]: (value) => inRange('wind', value),
+      [options.pathMap.windDir]: (value) => Math.abs(value) <= MAX_DIRECTION_RAD
+    }
 
     // While subscribe() runs, the server hands over the value it holds for
     // each path, however old that value is. Those deliveries are told apart
@@ -309,14 +378,14 @@ module.exports = function (app) {
       for (const update of delta.updates) {
         if (!update || !Array.isArray(update.values)) continue
 
-        // A live value is as old as its arrival, by this server's clock. A
-        // value from the server's cache is as old as its own timestamp says,
-        // unless that timestamp is missing or lies in the future, in which
-        // case nothing better is known than "now".
         // The source that sent the values. The server sets `$source` on every
         // update it delivers to a subscription.
         const source = update.$source
 
+        // A live value is as old as its arrival, by this server's clock. A
+        // value from the server's cache is as old as its own timestamp says,
+        // unless that timestamp is missing or lies in the future, in which
+        // case nothing better is known than "now".
         let time = arrived
         if (fromCache) {
           const stamped = Date.parse(update.timestamp)
@@ -327,23 +396,19 @@ module.exports = function (app) {
           if (!v || typeof v.path !== 'string') continue
           // A server with "enforce data timeouts" switched on publishes null,
           // marked as timed out, for a path whose source has stopped.
-          if (v.value === null && v.state && v.state.timedOut === true) {
-            s.readings.markTimedOut(v.path, time, source)
-            continue
+          const timedOut = v.value === null && v.state && v.state.timedOut === true
+          const taken = timedOut
+            ? s.readings.markTimedOut(v.path, time, source)
+            : s.readings.record(v.path, v.value, time, source)
+          if (!taken) continue
+          if (v.path in plausible) {
+            // The server's cached value counts for the mean from its own time
+            // stamp, but never as the gust: it may be hours old.
+            if (!isNumber(v.value)) s.samples.add(v.path, null, time, !fromCache)
+            else if (plausible[v.path](v.value)) s.samples.add(v.path, v.value, time, !fromCache)
           }
-          s.readings.record(v.path, v.value, time, source)
           if (v.path === POSITION_PATH) handlePositionUpdate(s, v.value)
-          // The peak is built from live samples only. A sample outside
-          // Windy's wind range is a sensor glitch; taking it as the peak
-          // would cost the real peak of the interval. A peak too old to be
-          // reported is replaced by the next sample, whatever its speed.
-          if (v.path === windPath && !fromCache && isNumber(v.value) && inRange('wind', v.value)) {
-            const expired = s.peakLimitMs > 0 && arrived - s.peakTime > s.peakLimitMs
-            if (v.value > s.peakGust || expired) {
-              s.peakGust = v.value
-              s.peakTime = arrived
-            }
-          }
+          if (v.path === DATETIME_PATH && !fromCache) noteClock(s, v.value, arrived, source)
         }
       }
     })
@@ -384,6 +449,17 @@ module.exports = function (app) {
   }
 
   // --- ENGINE ---
+
+  /**
+   * Notes the difference between the system clock and a GNSS time that has
+   * just arrived. The GNSS time is that of the fix, so the difference
+   * includes the delay of the message, which is well under a second.
+   */
+  function noteClock (s, value, arrivedMs, source) {
+    const gnss = typeof value === 'string' ? Date.parse(value) : NaN
+    if (!Number.isFinite(gnss) || gnss < EARLIEST_GNSS_TIME) return
+    s.clocks.set(String(source), { offsetMs: arrivedMs - gnss, at: arrivedMs })
+  }
 
   /**
    * Movement guard: records how far the vessel is from the last position sent
@@ -435,9 +511,10 @@ module.exports = function (app) {
    *      last sent.
    *   4. A setting the station record is built from has changed since the
    *      last update that succeeded: the Station ID, the name, the share
-   *      option, a sensor height, the station type, the website or the
-   *      elevation setting. The first cycle after an update from a version
-   *      that did not record these settings counts as a change.
+   *      option, a sensor height, the station type, the website, the
+   *      elevation setting or the position precision. The first cycle after
+   *      an update from a version that did not record these settings counts
+   *      as a change.
    *
    * The station update goes first, so that the observation that follows is
    * shown at the new position. Station updates do not count against Windy's
@@ -453,151 +530,145 @@ module.exports = function (app) {
     const now = Date.now()
     const maxAgeMs = options.maxAge * 60000
 
-    // The peak is the highest wind speed since the last successful report,
-    // so it may be as old as one reporting interval and still belong to this
-    // report. It is older than that only when reports have been failing, for
-    // example during a long loss of connectivity; a peak from before then is
-    // no longer current weather. The limit is the interval or the Maximum
-    // Reading Age, whichever is longer, and none when the age check is off.
-    //
-    // The peak is taken out of the session here, so that the samples that
-    // arrive while the requests are on their way begin the next peak. It is
-    // put back when this report does not reach Windy.
-    const taken = { gust: s.peakGust, time: s.peakTime }
-    s.peakGust = 0
-    s.peakTime = 0
-    const peakExpired = s.peakLimitMs > 0 && now - taken.time > s.peakLimitMs
-    let peakReported = false
+    // The wind, the gust and the direction are taken over the last interval,
+    // the same for every report, a retry after a rate limit included. The
+    // window starts earlier only to close the gap the previous report left
+    // while it was on its way (see WINDOW_GAP_MS). Older samples are no
+    // longer needed.
+    let windowStart = now - options.interval * 60000
+    if (s.windowEnd !== null && s.windowEnd < windowStart && windowStart - s.windowEnd <= WINDOW_GAP_MS) windowStart = s.windowEnd
+    s.windowEnd = now
+    s.samples.prune(windowStart)
+
+    const { fields, leftOut, missingPaths } = buildObservation({
+      readings: s.readings,
+      samples: s.samples,
+      pathMap: options.pathMap,
+      nowMs: now,
+      maxAgeMs,
+      fromMs: windowStart,
+      sendDirection: options.sendDirection
+    }, debug)
+
+    const positionReading = s.readings.read(POSITION_PATH, now, maxAgeMs)
+    const position = positionReading.value
+
+    const key = windy.stationKey(options)
+    const updateDue = options.forceUpdate || !state.hasReportedPosition || state.currentDistance >= options.minMove || state.stationKey !== key
+
+    // A refused station update stays on the dashboard while an update is
+    // still due. Once none is, for example because the vessel is back
+    // within the threshold of the position Windy holds, the record on
+    // Windy is current and the refusal no longer applies.
+    if (!updateDue) s.problems.station = null
+
+    // --- STEP 1: STATION UPDATE (PUT) ---
+    if (updateDue && options.shareProblem) {
+      // The owner has not chosen a share option Windy accepts. No value is
+      // chosen for them; the dashboard keeps the reason in view.
+      app.debug(`Station update not sent: ${options.shareProblem}`)
+    } else if (updateDue && positionReading.timedOut) {
+      app.debug('Station update not sent: the Signal K server reports that navigation.position has timed out')
+    } else if (updateDue && positionReading.state === 'stale') {
+      // The vessel may have moved since. Sending the old position would put
+      // the station where the vessel no longer is.
+      app.debug(`Station update not sent: the position was last updated ${Math.round(positionReading.ageMs / 60000)} minutes ago`)
+    } else if (updateDue && !isValidPosition(position)) {
+      app.debug('Station update not sent: navigation.position holds no usable position')
+    } else if (updateDue) {
+      const payload = windy.stationPayload(options, position, stationElevation(s, now, maxAgeMs))
+      app.debug(`Movement Guard: ${Math.round(state.currentDistance)}m from baseline position`)
+      app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(payload)}`)
+
+      try {
+        await windy.updateStation(options, payload)
+        if (!s.active) return null
+        // The baseline moves only after Windy has accepted the new position.
+        state.lastSentPos = { lat: position.latitude, lon: position.longitude }
+        state.currentDistance = 0
+        state.hasReportedPosition = true
+        state.stationKey = key
+        s.problems.station = null
+        unreachable = null
+        persist(s)
+        app.debug('Station metadata updated successfully')
+      } catch (err) {
+        if (!s.active) return null
+        const problem = windy.describeStationError(err)
+        app.error(problem.log)
+        if (problem.kind === 'unreachable') {
+          markUnreachable(problem.dashboard)
+        } else {
+          s.problems.station = problem.dashboard
+          // An answer, even a refusal, shows that Windy can be reached.
+          unreachable = null
+        }
+        // The observation is still sent: weather data is worth having even
+        // when the position could not be updated.
+      }
+    }
+
+    // --- STEP 2: OBSERVATION (GET) ---
+    if (Object.keys(fields).length === 0) {
+      // Instruments switched off at anchor are the usual reason, so this is
+      // a plain status and not an error. The heartbeat keeps it on the line.
+      s.noData = noDataText(missingPaths)
+      render(s, 'Next: 0m00s')
+      return null
+    }
+    // Readings are back, whatever becomes of this report.
+    s.noData = ''
+
+    app.debug(`Windy Submission (GET): ${JSON.stringify(fields)}`)
 
     try {
-      const { fields, leftOut, missingPaths } = buildObservation(s.readings, options.pathMap, peakExpired ? 0 : taken.gust, now, maxAgeMs, debug)
+      await windy.sendObservation(options, fields, Math.floor(Date.now() / 1000))
+      if (!s.active) return null
 
-      const positionReading = s.readings.read(POSITION_PATH, now, maxAgeMs)
-      const position = positionReading.value
+      // The dew point is not on the line, so a report of it alone leaves no
+      // readings to show.
+      lastReportString = [dashboardText(fields, leftOut), clockText(new Date())].filter(Boolean).join(' | ')
+      s.problems.observation = null
+      unreachable = null
+      render(s, 'Next: 0m00s')
+    } catch (err) {
+      if (!s.active) return null
+      const problem = windy.describeObservationError(err, Date.now())
 
-      const key = windy.stationKey(options)
-      const updateDue = options.forceUpdate || !state.hasReportedPosition || state.currentDistance >= options.minMove || state.stationKey !== key
-
-      // A refused station update stays on the dashboard while an update is
-      // still due. Once none is, for example because the vessel is back
-      // within the threshold of the position Windy holds, the record on
-      // Windy is current and the refusal no longer applies.
-      if (!updateDue) s.problems.station = null
-
-      // --- STEP 1: STATION UPDATE (PUT) ---
-      if (updateDue && options.shareProblem) {
-        // The owner has not chosen a share option Windy accepts. No value is
-        // chosen for them; the dashboard keeps the reason in view.
-        app.debug(`Station update not sent: ${options.shareProblem}`)
-      } else if (updateDue && positionReading.timedOut) {
-        app.debug('Station update not sent: the Signal K server reports that navigation.position has timed out')
-      } else if (updateDue && positionReading.state === 'stale') {
-        // The vessel may have moved since. Sending the old position would put
-        // the station where the vessel no longer is.
-        app.debug(`Station update not sent: the position was last updated ${Math.round(positionReading.ageMs / 60000)} minutes ago`)
-      } else if (updateDue && !isValidPosition(position)) {
-        app.debug('Station update not sent: navigation.position holds no usable position')
-      } else if (updateDue) {
-        const payload = windy.stationPayload(options, position, stationElevation(s, now, maxAgeMs))
-        app.debug(`Movement Guard: ${Math.round(state.currentDistance)}m from baseline position`)
-        app.debug(`Windy Metadata Submission (PUT): ${JSON.stringify(payload)}`)
-
-        try {
-          await windy.updateStation(options, payload)
-          if (!s.active) return null
-          // The baseline moves only after Windy has accepted the new position.
-          state.lastSentPos = { lat: position.latitude, lon: position.longitude }
-          state.currentDistance = 0
-          state.hasReportedPosition = true
-          state.stationKey = key
-          s.problems.station = null
-          unreachable = null
-          persist(s)
-          app.debug('Station metadata updated successfully')
-        } catch (err) {
-          if (!s.active) return null
-          const problem = windy.describeStationError(err)
-          app.error(problem.log)
-          if (problem.kind === 'unreachable') {
-            markUnreachable(problem.dashboard)
-          } else {
-            s.problems.station = problem.dashboard
-            // An answer, even a refusal, shows that Windy can be reached.
-            unreachable = null
-          }
-          // The observation is still sent: weather data is worth having even
-          // when the position could not be updated.
-        }
-      }
-
-      // --- STEP 2: OBSERVATION (GET) ---
-      if (Object.keys(fields).length === 0) {
-        // Instruments switched off at anchor are the usual reason, so this is
-        // a plain status and not an error. The heartbeat keeps it on the line.
-        s.noData = noDataText(missingPaths)
+      if (problem.kind === 'unreachable') {
+        app.error(problem.log)
+        markUnreachable(problem.dashboard)
         render(s, 'Next: 0m00s')
         return null
       }
-      // Readings are back, whatever becomes of this report.
-      s.noData = ''
 
-      app.debug(`Windy Submission (GET): ${JSON.stringify(fields)}`)
+      // Every other answer shows that Windy can be reached.
+      unreachable = null
 
-      try {
-        await windy.sendObservation(options, fields, Math.floor(Date.now() / 1000))
-        if (!s.active) return null
-
-        lastReportString = `${dashboardText(fields, leftOut)} | ${clockText(new Date())}`
+      if (problem.kind === 'rateLimit') {
+        // Expected flow, not an error: nothing is shown on the dashboard. The
+        // observation is dropped, not queued.
         s.problems.observation = null
-        unreachable = null
-        peakReported = true
-        render(s, 'Next: 0m00s')
-      } catch (err) {
-        if (!s.active) return null
-        const problem = windy.describeObservationError(err, Date.now())
-
-        if (problem.kind === 'unreachable') {
-          app.error(problem.log)
-          markUnreachable(problem.dashboard)
-          render(s, 'Next: 0m00s')
-          return null
+        if (problem.retryDelayMs) {
+          app.debug(`Rate limited by Windy. Retry after ${Math.ceil(problem.retryDelayMs / 1000)}s (from retry_after timestamp)`)
+          return problem.retryDelayMs
         }
-
-        // Every other answer shows that Windy can be reached.
-        unreachable = null
-
-        if (problem.kind === 'rateLimit') {
-          // Expected flow, not an error: nothing is shown on the dashboard. The
-          // observation is dropped, not queued.
-          s.problems.observation = null
-          if (problem.retryDelayMs) {
-            app.debug(`Rate limited by Windy. Retry after ${Math.ceil(problem.retryDelayMs / 1000)}s (from retry_after timestamp)`)
-            return problem.retryDelayMs
-          }
-          app.debug('Rate limited by Windy (429). Could not parse retry_after, using normal interval.')
-          return null
-        }
-
-        if (problem.kind === 'duplicate') {
-          s.problems.observation = null
-          app.debug('Windy already holds an observation with this time (409). Nothing to resend.')
-          return null
-        }
-
-        app.error(problem.log)
-        s.problems.observation = problem.dashboard
-        render(s, 'Next: 0m00s')
+        app.debug('Rate limited by Windy (429). Could not parse retry_after, using normal interval.')
+        return null
       }
 
-      return null
-    } finally {
-      // A peak that did not reach Windy belongs to the next report, unless a
-      // higher one has arrived in the meantime.
-      if (!peakReported && !peakExpired && taken.gust > s.peakGust) {
-        s.peakGust = taken.gust
-        s.peakTime = taken.time
+      if (problem.kind === 'duplicate') {
+        s.problems.observation = null
+        app.debug('Windy already holds an observation with this time (409). Nothing to resend.')
+        return null
       }
+
+      app.error(problem.log)
+      s.problems.observation = problem.dashboard
+      render(s, 'Next: 0m00s')
     }
+
+    return null
   }
 
   return plugin

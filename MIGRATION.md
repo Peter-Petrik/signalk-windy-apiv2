@@ -38,15 +38,22 @@ To find the new credentials, log in to [stations.windy.com](https://stations.win
 
 **Humidity**: Both plugins read `environment.outside.humidity`, the path in the Signal K specification and the one Signal K's NMEA 0183 and NMEA 2000 converters publish. Versions of this plugin before 1.5.2 defaulted to `environment.outside.relativeHumidity`; from 1.5.2 that path is read only as a fallback when the first holds no value. No path override is needed for humidity.
 
+### Wind
+
+The legacy plugin sends the highest wind speed since its last successful report as the gust; this plugin (v1.8.0+) the highest value of the gust path or of the wind speed in the reporting interval. The legacy plugin sends the median of the wind speed samples since its last successful report as the wind speed, and the latest direction. This plugin (v1.8.0+) sends the mean of the reporting interval, each value weighted by how long it stood, and the mean direction of the interval, weighted by the wind speed (see [Wind Over the Reporting Interval](README.md#wind-over-the-reporting-interval)). The median and the mean of the same wind are close but not equal, so the wind speed on Windy can differ slightly after the switch.
+
 ### Features Not in the Legacy Plugin
 
-These are available after migration with no additional configuration. Both plugins send the highest wind speed between two reports as the gust.
+These are available after migration. Position Precision is chosen under **Vessel Identity & Sensors**, and the Clock Check needs a source of `navigation.datetime`.
 
 - **Movement Guard** — radius-based position tracking that only updates the Windy map when the vessel moves beyond a configurable threshold (default 300m). Prevents unnecessary API calls and map pin jitter while at anchor.
 - **State Persistence** — the reporting timer, movement baseline, and distance tracking are saved after every reporting cycle and survive plugin restarts, server restarts and reboots.
 - **Dashboard Heartbeat** — live countdown to next report with current sensor readings and distance from baseline.
 - **Stale Reading Protection** — a reading from a sensor that has stopped updating is left out of the report after 15 minutes (configurable).
 - **Rate Limit Awareness** — handles Windy's 429 responses by rescheduling precisely to the provided retry window.
+- **Dew Point** — `environment.outside.dewPointTemperature` is sent when a source publishes it.
+- **Clock Check** — an error on the dashboard while the system clock differs from GNSS time by more than 60 seconds.
+- **Position Precision** — the position on the Windy map can be rounded to about 100 m or about 1 km.
 
 ## Migration Steps
 
@@ -66,7 +73,7 @@ These are available after migration with no additional configuration. Both plugi
 
    Review the rest of **Vessel Identity & Sensors** as well before saving: the first report sends the whole station record, which replaces the name, station type, website, share option, sensor heights and elevation shown on Windy, and removes an operator logo uploaded there (see [Known Limitations](README.md#known-limitations)). Then click **Save Configuration** below the form. Saving the configuration for the first time also enables the plugin.
 
-6. **Check path overrides.** If the vessel provides `environment.wind.directionGround` instead of `directionTrue`, open the "Sensor Path Overrides" section and update the Wind Direction path. The other defaults match the paths the legacy plugin reads.
+6. **Check path overrides.** If the vessel provides `environment.wind.directionGround` instead of `directionTrue`, open the "Sensor Path Overrides" section and update the Wind Direction path. The other defaults for the readings both plugins send match the paths the legacy plugin reads.
 
 7. **Verify operation.** After enabling the new plugin, check the Signal K dashboard for the heartbeat status showing sensor readings and countdown. Confirm the station appears on [windy.com](https://www.windy.com) with current data.
 

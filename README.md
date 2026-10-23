@@ -1,7 +1,7 @@
 # Signal K Windy API v2 Reporter
 ![Signal K Windy Icon](icon.svg)
 
-This plugin gathers environmental data from a Signal K server and reports it to Windy.com as a Personal Weather Station (PWS) using the **v2 API**. It is designed specifically for moving vessels, utilizing separate endpoints for data (Wind, Gusts, Temperature, Pressure, and Humidity) and station metadata to ensure reliable map updates and minimal bandwidth usage.
+This plugin gathers environmental data from a Signal K server and reports it to Windy.com as a Personal Weather Station (PWS) using the **v2 API**. It is designed specifically for moving vessels, utilizing separate endpoints for data (Wind, Gusts, Temperature, Pressure, Humidity and Dew Point) and station metadata to ensure reliable map updates and minimal bandwidth usage.
 
 ## Project Status
 
@@ -16,7 +16,9 @@ This is the only Signal K plugin targeting the Windy v2 API. Users of the legacy
 - **Stale Reading Protection**: (v1.6.0+) A sensor reading that has not been updated for 15 minutes is left out of the report, so a sensor that has stopped is not reported as current weather. The limit is a setting and can be switched off.
 - **Live Heartbeat Status**: Enhanced dashboard feedback showing countdown to next report, distance from baseline, current sensor readings, and last submission time. See [Dashboard Status](#dashboard-status).
 - **Radius-Based Movement Guard**: Intelligent GPS reporting that triggers map updates only when the vessel moves beyond a set radius from its last position, preventing "phantom movement" while at anchor.
-- **Peak Gust Tracking**: The highest wind speed seen between two reports is sent as the gust, so that a gust between two 5-minute reports is not missed. The samples are the ones the Signal K server delivers once a second, the latest of each second.
+- **Wind Over the Reporting Interval**: (v1.8.0+) The wind speed sent is the mean of the reporting interval, the gust the highest value in it and the direction the mean direction, as weather stations report wind. Earlier versions sent the wind speed and direction of the moment of the report. See [Wind Over the Reporting Interval](#wind-over-the-reporting-interval).
+- **Clock Check**: (v1.8.0+) The system clock is compared with GNSS time from `navigation.datetime`, and the dashboard shows an error while the two differ by more than 60 seconds. See [Clock Check](#clock-check).
+- **Position Precision**: (v1.8.0+) The position on the Windy map can be rounded to about 100 m or about 1 km. See [Station Record](#station-record).
 - **State Persistence**: (v1.5.2+) Saves the movement baseline and reporting schedule to `state.json` after every reporting cycle, so both survive a plugin restart, a server restart, a reboot and a power loss.
 - **Station Record Kept Current**: (v1.7.0+) A change to a setting the station record is built from, such as the Display Name or a sensor height, is sent to Windy at the next report, whether or not the vessel has moved. See [Station Record](#station-record).
 - **Smart Unit Conversion**: Automatically handles conversion from Signal K base units (Kelvin, Pascal, m/s) to Windy standards (°C, Pa, m/s).
@@ -29,14 +31,17 @@ Each reporting cycle sends one observation built from the Signal K paths below. 
 
 | Measurement | Signal K Path (Default) | Windy Parameter | Conversion |
 | :--- | :--- | :--- | :--- |
-| Wind speed | `environment.wind.speedOverGround` | `wind` | None (m/s) |
-| Wind gust | `environment.wind.gust` | `gust` | None (m/s). The highest wind speed seen since the last report is sent when it is higher, or when the path has no value. The gust is never sent below the wind speed of the same report |
-| Wind direction | `environment.wind.directionTrue` | `winddir` | Radians to whole degrees, folded into 0 to 359. A value beyond ±2π is not an angle in radians and is left out |
+| Wind speed | `environment.wind.speedOverGround` | `wind` | None (m/s). (v1.8.0+) The mean of the reporting interval |
+| Wind gust | `environment.wind.gust` | `gust` | None (m/s). The highest value of this path or of the wind speed in the reporting interval, whichever is higher. The gust is never sent below the wind speed of the same report |
+| Wind direction | `environment.wind.directionTrue` | `winddir` | Radians to whole degrees, folded into 0 to 359. (v1.8.0+) The mean direction of the reporting interval. A value beyond ±2π is not an angle in radians and is left out |
 | Temperature | `environment.outside.temperature` | `temp` | Kelvin to °C |
 | Pressure | `environment.outside.pressure` | `pressure` | None (Pa) |
 | Humidity | `environment.outside.humidity` | `rh` | Ratio to percent |
+| Dew point | `environment.outside.dewPointTemperature` | `dewpoint` | (v1.8.0+) Kelvin to °C. Not shown on the dashboard, also when it is left out |
 
-`environment.outside.humidity` is the humidity path of the Signal K specification and the one Signal K's own NMEA 0183 and NMEA 2000 converters publish. Versions before 1.5.2 read `environment.outside.relativeHumidity`. When the configured path is one of these two and holds no value, the other is read, so an existing configuration needs no change. `environment.wind.gust` is not a path in the Signal K specification; where no source publishes it, the gust is the highest wind speed seen since the last report.
+`environment.outside.humidity` is the humidity path of the Signal K specification and the one Signal K's own NMEA 0183 and NMEA 2000 converters publish. Versions before 1.5.2 read `environment.outside.relativeHumidity`. When the configured path is one of these two and holds no value, the other is read, so an existing configuration needs no change. `environment.wind.gust` is not a path in the Signal K specification; where no source publishes it, the gust is the highest wind speed of the reporting interval.
+
+Windy expects the wind over ground: speed and direction relative to the ground, the direction in degrees from true north. `environment.wind.speedOverGround` and `environment.wind.directionTrue` are published by the `signalk-derived-data` plugin and by Signal K's NMEA 2000 converter for wind data referenced to true north. (v1.8.0+) These wind paths, which cannot give it, are named on the dashboard as an error: apparent wind speed (`environment.wind.speedApparent`), which includes the vessel's own speed, and the magnetic direction (`environment.wind.directionMagnetic`) are still sent; an angle from the bow (`environment.wind.angleApparent`, `environment.wind.angleTrueWater` or `environment.wind.angleTrueGround`) is not a compass direction, and no direction is sent.
 
 ### Station Record
 
@@ -44,14 +49,14 @@ The plugin sends the station record to Windy before the observation when one of 
 
 1. No station update has succeeded yet, as after an installation or a full reset.
 2. The vessel has moved beyond the movement threshold from the position last sent.
-3. (v1.7.0+) One of these settings has changed since the last update Windy accepted: **Station ID**, **Display Name**, **Station Type**, **Operator Website URL**, **Share Option**, **Wind Sensor Height**, **Temperature Sensor Height** or **Station Elevation**. A change of the GNSS altitude does not count. The first report after an update from an earlier version sends the record once for this reason, even at anchor.
+3. (v1.7.0+) One of these settings has changed since the last update Windy accepted: **Station ID**, **Display Name**, **Station Type**, **Operator Website URL**, **Share Option**, **Wind Sensor Height**, **Temperature Sensor Height**, **Station Elevation** or (v1.8.0+) **Position Precision**. A change of the GNSS altitude does not count. The first report after an update from a version earlier than 1.7.0 sends the record once for this reason, even at anchor.
 4. **Force GPS Updates** is on: the record is sent with every report.
 
 Windy replaces the whole record with each update (see [Known Limitations](#known-limitations)).
 
 | Station Field | Source |
 | :--- | :--- |
-| `lat`, `lon` | `navigation.position`, rounded to five decimals |
+| `lat`, `lon` | `navigation.position`, rounded to five decimals, or as set by **Position Precision** |
 | `elev_m` | **Station Elevation** if set. Otherwise `navigation.gnss.antennaAltitude` if it holds a current number, otherwise `navigation.altitude`, otherwise 0; rounded to a whole metre |
 | `name`, `operator_text` | **Display Name** |
 | `station_type` | **Station Type** |
@@ -63,13 +68,15 @@ The two sensor heights describe how far each sensor is above the waterline. They
 
 A station update is not sent with a position older than the **Maximum Reading Age**, since the vessel may have moved in the meantime.
 
+Windy shows the position of a public station to anyone. **Position Precision** (v1.8.0+) sets how exactly it is placed on the map: **Exact** sends five decimals (about 1 m), **About 100 m** three and **About 1 km** two. Rounding moves the station on the map by less than the stated distance. The Movement Guard still measures from the real position, and observations carry no position.
+
 ## Compatibility
 
 | | |
 | :--- | :--- |
 | Node.js | 20 or later (`engines` in `package.json`). Signal K server 2.24.0 and later require Node.js 22 or later |
 | Automated tests | Run on Node.js 20.20.2, 22.22.0 and 24.21.0 |
-| Signal K server | Loaded and started on Signal K server 2.31.1, 2.32.0, 2.33.0 and 2.34.0. On each, reporting cycles were run with every request to Windy intercepted: a reading timed out by the server, a changed setting sent without movement, a refused station update, a lost connection and the recovery. On 2.33.0 the runs also had a position published by several sources |
+| Signal K server | Loaded and started on Signal K server 2.31.1, 2.32.0, 2.33.0 and 2.34.0. On each, reporting cycles were run with every request to Windy intercepted: a reading timed out by the server, a changed setting sent without movement, a refused station update, a lost connection and the recovery, and (v1.8.0+) a wind changing every two seconds, a dew point, a GNSS time 90 seconds behind the system clock and a rounded position. On 2.33.0 the runs also had a position published by several sources |
 | Plugin CI | The [Signal K plugin CI](https://github.com/SignalK/signalk-server/blob/master/.github/workflows/plugin-ci.yml) runs on every push: the tests on Linux, Linux arm64, macOS and Windows with Node.js 22 and 24, and an integration check against Signal K server 2.32.0, 2.33.0 and the latest release |
 
 Signal K server versions older than 2.31.1 have not been tested with this release. Earlier releases of the plugin were developed on Signal K server 2.21 and 2.22.
@@ -129,13 +136,31 @@ Next: 4m53s | Δ6m | No connection to Windy since 14:05
 
 Both are shown as a plain status, not as an error: instruments that are switched off and a lost connection at sea are routine, and both clear by themselves.
 
-A request that Windy refuses, a share option Windy does not accept and an unforeseen failure are shown as an error, in place of the countdown and the readings, until the cause is gone: a refused station update until an update succeeds or none is due any more, a refused observation until Windy accepts or answers the next one (v1.7.0+). A refused station update is sent again at every report while it is due. When several errors apply, they are shown together, separated by `|`. When the error has cleared, the line returns to the countdown, and the server keeps the error in the **Last Error** column until the plugin is restarted.
+A request that Windy refuses, a share option Windy does not accept, (v1.8.0+) a wind path that cannot give the wind Windy expects, a system clock more than 60 seconds off GNSS time and an unforeseen failure are shown as an error, in place of the countdown and the readings, until the cause is gone: a refused station update until an update succeeds or none is due any more, a refused observation until Windy accepts or answers the next one (v1.7.0+). A refused station update is sent again at every report while it is due. When several errors apply, they are shown together, separated by `|`. When the error has cleared, the line returns to the countdown, and the server keeps the error in the **Last Error** column until the plugin is restarted.
 
 ### Stale Readings
 
 Signal K keeps the last value of a path for as long as the server runs, so a sensor that was switched off an hour ago still has a value there. From v1.6.0 the plugin takes every reading from its live subscription and notes when it arrived. A reading that has not been updated within the **Maximum Reading Age** (default 15 minutes) is not sent, and the dashboard shows it with a dash.
 
 A sensor that sends a value only when the value changes can exceed the limit while working correctly, for example a humidity sensor on a steady night. For such a sensor the limit can be raised, or set to 0 to switch the check off.
+
+### Wind Over the Reporting Interval
+
+Weather stations report wind as a mean over a period, with the gust as the highest value in it: the World Meteorological Organization defines the reported wind as a mean over 10 minutes, and weather station software such as WeeWX sends the mean of its archive interval. From v1.8.0 the plugin takes its reporting interval as the period:
+
+1. **Wind speed**: the mean of the values in the interval, each weighted by how long it stood until the next one arrived, but for no longer than the **Maximum Reading Age** after it was last delivered. A sensor that sends only when its value changes is weighted correctly, and a burst of values does not outweigh a steady minute. A time in which the sensor had no value, or which the Signal K server declared timed out, is left out.
+2. **Gust**: the highest value of the gust path or of the wind speed in the interval, including a value that arrived earlier and still stood when the interval began. The gust is never sent below the wind speed, and in a calm it is 0.
+3. **Direction**: the mean of the directions taken as vectors, so that 350° and 10° give 0°, each weighted by the wind speed at the time, so that the wandering direction of a near calm counts little. In a calm, or with no wind speed at all, every moment counts the same.
+
+The interval is the one before the report, for a retry after a rate limit as well, extended back over the time the previous report took to be answered. Whether the wind is sent at all is decided by its latest reading, as for every other field: a wind speed older than the **Maximum Reading Age** is left out, and so is the gust it gives. A value from before a sensor stopped for longer than the **Maximum Reading Age** does not count once it comes back. The Signal K server delivers at most one value a second from each source, the latest of that second. A value outside the range Windy accepts is not taken, and the value before it goes on standing; when the latest value is outside the range, the wind speed is left out. A wind speed the server held before the plugin started counts for the mean from its own time stamp, but not as the gust, and a value of the gust path counts as the gust only when it arrived in the interval or stood live at its start. When the server held values of a path from several sources, only the newest counts. After the system clock has been set back, the values of the interval start again.
+
+Windy's documentation does not say whether it expects a mean or a moment. Versions before 1.8.0 sent the wind speed and direction of the moment of the report, and the highest wind speed since the previous report as the gust.
+
+### Clock Check
+
+The observation time sent to Windy is the system clock of the Signal K server. Windy accepted an observation stamped 2 minutes ahead of its own clock and refused one stamped 5 minutes ahead (tested 2026-10-23); it accepts none more than two hours in the past. A clock that is behind stamps every observation with the wrong time.
+
+From v1.8.0 the plugin compares the system clock with GNSS time from `navigation.datetime` as each value arrives, and shows an error on the dashboard while the two differ by more than 60 seconds. Observations are still sent. The [set-system-time](https://github.com/SignalK/set-system-time) plugin sets the system clock from GNSS time. Without `navigation.datetime` there is no check. Each source of `navigation.datetime` is judged on its own, and one that agrees with the system clock is enough, so that a device publishing the time of its own clock does not turn the error on and off. A GNSS time that has not been updated within the **Maximum Reading Age**, or within 15 minutes when the age check is off, is not used, nor is a time before October 2026, such as a receiver without a fix may send.
 
 ### Real-Time Log Monitoring
 To stream logs specifically for this plugin on an installation created with `signalk-server-setup`:
@@ -182,9 +207,11 @@ When sharing logs, redact the **Station Password** and **API Key** before postin
 6. **"No data: ..."** — Not an error. No sensor path has a usable reading, so there is nothing to send. The line names the first such path. A path that is not published at all needs a source or a different path under **Sensor Path Overrides (Advanced)**; a path whose sensor has stopped is reported again when the sensor resumes.
 7. **"Station position not updated: Share Option ..."** — The saved Share Option is one Windy does not accept, or none is saved. Observations are still sent, but the position on the map is not updated until **Public** or **Windy only** is selected. Versions before 1.5.2 offered a **Private** option, which Windy rejects.
 8. **"Metadata update failed (400): ..."** — Windy rejected the station record and gives its reason after the status (v1.7.0+; earlier versions showed the status only). The server log holds Windy's answer.
-9. **"Observation failed: Status 400: ..."** — Windy rejected the observation and names the field in the message. A message about `ts` means the system clock of the server is wrong: Windy accepts no time in the future and none more than two hours in the past. A status of 500 is shown the same way.
+9. **"Observation failed: Status 400: ..."** — Windy rejected the observation and names the field in the message. A message about `ts` means the system clock of the server is wrong: Windy refuses a time a few minutes in the future and any time more than two hours in the past (see [Clock Check](#clock-check)). A status of 500 is shown the same way.
 10. **"Reporting cycle failed: ..."** — An error the plugin did not foresee. The plugin reports again at the next cycle; the server log holds the details, which are worth including in a bug report.
 11. **"No connection to Windy since ..."**, **"No answer from Windy since ..."**, **"Answer from Windy too large since ..."** and **"Windy not available (503) since ..."** — Not an error. Windy could not be reached from the time named; the plugin goes on trying at every report. A connection that works for other services points to Windy being down; Windy's own status is not known to the plugin.
+12. **"Wind Speed path ..."** and **"Wind Direction path ..."** — (v1.8.0+) The configured wind path cannot give the wind Windy expects. The message names the path and the path to choose under **Sensor Path Overrides (Advanced)** (see [Observations](#observations)).
+13. **"System clock is more than 60 s ahead of GNSS time ..."** and **"System clock is more than 60 s behind GNSS time ..."** — (v1.8.0+) The system clock of the server is wrong (see [Clock Check](#clock-check)).
 
 At most 200 characters of an answer from Windy are shown on the dashboard and at most 500 are logged. An HTML page in place of an answer, as a gateway sends, is shown as `(HTML page)`.
 
@@ -193,7 +220,7 @@ At most 200 characters of an answer from Windy are shown on the dashboard and at
 ## Known Limitations
 
 1. **Station details edited on Windy are replaced by the plugin's settings.** Windy replaces the whole station record on every update and offers no way to send a position alone. Every station update sends the name, station type, website, share option, sensor heights and elevation from the plugin configuration, so changes made to these at [stations.windy.com](https://stations.windy.com) are overwritten at the next update. The plugin does not resend an operator logo, so a logo uploaded at stations.windy.com is removed at the next update.
-2. **One source per path.** When several sources publish the same path and no source priority is set for it in the Signal K server, the server passes the values of all of them to the plugin, and each report carries whichever arrived last. Setting a source priority for the path makes the server pass only the preferred source.
+2. **One source per path.** When several sources publish the same path and no source priority is set for it in the Signal K server, the server passes the values of all of them to the plugin: the wind of a report is taken from the values of all of them, and every other reading is whichever arrived last. Setting a source priority for the path makes the server pass only the preferred source.
 3. **The Global API Key controls every station on the Windy account.** The Signal K server keeps it, with the Station Password, in the plugin configuration (`~/.signalk/plugin-config-data/signalk-windy-apiv2.json`). A server whose security is switched off lets anyone who can reach it read that configuration, credentials included, and change it.
 
 ## Future Enhancements

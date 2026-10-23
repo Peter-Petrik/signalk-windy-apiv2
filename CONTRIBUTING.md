@@ -26,6 +26,7 @@ The plugin is plain JavaScript with no build step and one runtime dependency, `a
 | `index.js` | The plugin's lifecycle and schedule: start, stop, subscriptions, the countdown, and the order of the two requests in a reporting cycle. |
 | `lib/schema.js` | The configuration form, and the reading of a saved configuration with its defaults. |
 | `lib/readings.js` | The latest value of every subscribed path and the time it arrived. |
+| `lib/samples.js` | The values of the wind paths over the reporting interval: the mean, the highest value and the mean direction. |
 | `lib/convert.js` | Readings to observation fields: age check, unit conversion, the gust rule, range checks. |
 | `lib/movement.js` | Distance from the last position sent to Windy. |
 | `lib/state.js` | Loading and saving `state.json`. |
@@ -60,19 +61,21 @@ npm test
 
 This checks the syntax of `index.js` and runs the test suite with the Node.js built-in test runner. No extra packages are needed.
 
-The tests drive the plugin the way the Signal K server does: through the `app` object, through `start()` and `stop()`, and through the passage of time. The two requests to Windy are intercepted, so no test contacts Windy, and the clock is controlled, so a five-minute reporting cycle takes no time. The harness delivers values the way the server's subscriptions do: the value held for each path at the moment of subscribing, then one delivery per update. By default it repeats every value once a minute, as working sensors do; `createEnv({ live: false })` gives sensors that have stopped. `env.dashboard()` returns the dashboard line and its Last Error, kept the way the server keeps them.
+The tests drive the plugin the way the Signal K server does: through the `app` object, through `start()` and `stop()`, and through the passage of time. The two requests to Windy are intercepted, so no test contacts Windy, and the clock is controlled, so a five-minute reporting cycle takes no time. The harness delivers values the way the server's subscriptions do: the value held for each path at the moment of subscribing, then one delivery per update. By default it repeats every value once a minute, as working sensors do; `createEnv({ live: false })` gives sensors that have stopped. `env.emit(path, value, source)` delivers a value from a named source. `env.dashboard()` returns the dashboard line and its Last Error, kept the way the server keeps them.
 
 | File | Covers |
 | :--- | :--- |
 | `test/reporting.test.js` | What is sent, in which order and when; the movement guard |
-| `test/conversions.test.js` | Unit conversion, missing values, the gust rule, path overrides |
+| `test/conversions.test.js` | Unit conversion, missing values, the gust rule, path overrides, the dew point |
 | `test/robustness.test.js` | Values that are not numbers, out-of-range readings, positions without coordinates, a cycle that fails |
-| `test/settings.test.js` | Zero values, defaults without the form, the share option, Force GPS Updates, station elevation, the humidity path |
-| `test/stale.test.js` | Stale readings, paths the server declares timed out, values held by the server at start, the no-data line, wind and gust from the same samples, the peak |
+| `test/settings.test.js` | Zero values, defaults without the form, the share option, Force GPS Updates, station elevation, the humidity path, the position precision |
+| `test/stale.test.js` | Stale readings, paths the server declares timed out, values held by the server at start, the no-data line, wind and gust from the same samples, the wind window across failed and delayed reports |
 | `test/lifecycle.test.js` | Starting without credentials, stopping during a request, release of subscriptions |
 | `test/errors.test.js` | Rate limits, rejected requests, network errors, dashboard messages |
 | `test/dashboard.test.js` | How long an error stays on the dashboard and what becomes its Last Error, Windy out of reach, the time and the countdown |
 | `test/station-record.test.js` | The station record sent again after a change of the settings it is built from |
+| `test/wind.test.js` | The wind over the reporting interval: the mean, the gust and the mean direction; a clock set back; wind paths that cannot give the wind Windy expects |
+| `test/clock.test.js` | The system clock compared with GNSS time |
 | `test/state.test.js` | The state file and restarts |
 | `test/schema.test.js` | The configuration form |
 | `test/package.test.js` | App Store metadata in `package.json` and the format of `CHANGELOG.md` |

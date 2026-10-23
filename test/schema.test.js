@@ -94,7 +94,26 @@ describe('configuration schema', () => {
     assert.equal(sections.identity.properties.agl_temp.type, 'integer')
   })
 
-  it('has a default Signal K path for each of the six sensors', () => {
+  it('says that the wind is taken over the reporting interval, and names its limits', () => {
+    const description = sections.logic.properties.interval.description
+    assert.match(description, /from 5 to 1440/)
+    assert.match(description, /wind speed and direction sent are averaged over this interval, and the gust is its highest wind speed/)
+  })
+
+  it('offers three position precisions, with the exact position as the default', () => {
+    const precision = sections.identity.properties.positionPrecision
+    assert.equal(precision.type, 'string')
+    assert.deepEqual(precision.enum, ['exact', '100m', '1km'])
+    assert.deepEqual(precision.enumNames, ['Exact', 'About 100 m', 'About 1 km'])
+    assert.equal(precision.default, 'exact')
+    assert.match(precision.description, /Windy shows the position of a public station to anyone/)
+  })
+
+  it('asks for the dew point path under the sensor path overrides', () => {
+    assert.equal(sections.pathMap.properties.dewPoint.title, 'Dew Point')
+  })
+
+  it('has a default Signal K path for each of the seven sensors', () => {
     const defaults = Object.fromEntries(Object.entries(sections.pathMap.properties).map(([key, def]) => [key, def.default]))
     assert.deepEqual(defaults, {
       windSpeed: 'environment.wind.speedOverGround',
@@ -102,7 +121,8 @@ describe('configuration schema', () => {
       windDir: 'environment.wind.directionTrue',
       temp: 'environment.outside.temperature',
       pressure: 'environment.outside.pressure',
-      humidity: 'environment.outside.humidity'
+      humidity: 'environment.outside.humidity',
+      dewPoint: 'environment.outside.dewPointTemperature'
     })
   })
 

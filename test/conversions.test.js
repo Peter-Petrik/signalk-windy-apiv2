@@ -98,7 +98,7 @@ describe('gust', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 
-  it('reports the highest wind speed seen since the last report when it exceeds the gust path', async () => {
+  it('reports the highest wind speed of the interval when it exceeds the gust path', async () => {
     const env = createEnv()
     env.plugin.start(config())
     env.emit('environment.wind.speedOverGround', 6.0)
@@ -129,7 +129,7 @@ describe('gust', () => {
     env.plugin.stop()
   })
 
-  it('starts a new peak after each successful report', async () => {
+  it('takes the gust of each report from its own interval', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree })
@@ -143,7 +143,7 @@ describe('gust', () => {
     env.plugin.stop()
   })
 
-  it('keeps the peak when the report fails, so the next report still carries it', async () => {
+  it('takes the gust from the last interval only, also after a report that did not reach Windy', async () => {
     const tree = fullTree()
     delete tree.environment.wind.gust
     const env = createEnv({ tree })
@@ -154,7 +154,7 @@ describe('gust', () => {
     env.get = async () => ({ status: 200, data: {} })
     env.emit('environment.wind.speedOverGround', 3.0)
     await advance(FIVE_MINUTES_MS)
-    assert.equal(env.gets()[1].params.gust, '12.0')
+    assert.equal(env.gets()[1].params.gust, '3.0')
     env.plugin.stop()
   })
 })
@@ -199,8 +199,10 @@ describe('path overrides', () => {
         { path: 'environment.outside.pressure', period: 1000 },
         { path: 'environment.outside.humidity', period: 1000 },
         { path: 'environment.outside.relativeHumidity', period: 1000 },
+        { path: 'environment.outside.dewPointTemperature', period: 1000 },
         { path: 'navigation.gnss.antennaAltitude', period: 1000 },
-        { path: 'navigation.altitude', period: 1000 }
+        { path: 'navigation.altitude', period: 1000 },
+        { path: 'navigation.datetime', period: 1000 }
       ]
     })
     env.plugin.stop()
@@ -213,6 +215,57 @@ describe('path overrides', () => {
     assert.ok(paths.includes('custom.h'))
     assert.ok(!paths.includes('environment.outside.humidity'))
     assert.ok(!paths.includes('environment.outside.relativeHumidity'))
+    env.plugin.stop()
+  })
+})
+
+describe('dew point', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  const withDewPoint = (value, skPath = 'environment.outside.dewPointTemperature') => {
+    const tree = fullTree()
+    const keys = skPath.split('.')
+    let node = tree
+    for (const key of keys.slice(0, -1)) node = node[key] = node[key] || {}
+    node[keys[keys.length - 1]] = { value }
+    return tree
+  }
+
+  it('is sent in degrees Celsius with one decimal', async () => {
+    assert.equal((await observationFor(withDewPoint(285.65))).dewpoint, '12.5')
+  })
+
+  it('is left out when it lies outside -60 to 50 °C, the range Windy accepts', async () => {
+    assert.ok(!('dewpoint' in await observationFor(withDewPoint(213.0))))
+    assert.ok(!('dewpoint' in await observationFor(withDewPoint(323.25))))
+    assert.equal((await observationFor(withDewPoint(213.15))).dewpoint, '-60.0')
+  })
+
+  it('is read from the configured path', async () => {
+    const params = await observationFor(withDewPoint(280.15, 'custom.dp'), { pathMap: { dewPoint: 'custom.dp' } })
+    assert.equal(params.dewpoint, '7.0')
+  })
+
+  it('is not shown on the dashboard, which has no room for it', async () => {
+    const env = createEnv({ tree: withDewPoint(285.65) })
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.match(env.lastStatus(), /^Next: 0m00s \| Δ0m \| W:9\.9 G:14\.0 D:180 T:20\.0 P:101\.3 H:65 \| \d{2}:\d{2}$/)
+    env.plugin.stop()
+  })
+
+  it('is reported alone when it is the only reading, without an empty part on the dashboard', async () => {
+    const tree = withDewPoint(285.65)
+    delete tree.environment.wind
+    delete tree.environment.outside.temperature
+    delete tree.environment.outside.pressure
+    delete tree.environment.outside.humidity
+    const env = createEnv({ tree })
+    env.plugin.start(config())
+    await advance(WARM_UP_MS)
+    assert.deepEqual(Object.keys(env.gets()[0].params).filter((k) => !['id', 'ts', 'softwaretype'].includes(k)), ['dewpoint'])
+    assert.match(env.lastStatus(), /^Next: 0m00s \| Δ0m \| \d{2}:\d{2}$/)
     env.plugin.stop()
   })
 })

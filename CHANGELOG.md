@@ -5,6 +5,23 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-10-23
+
+### Added
+- **Dew Point**: `environment.outside.dewPointTemperature` is sent to Windy as `dewpoint`, converted from kelvin to °C; Windy accepted it on a test station. A value outside -60 to 50 °C, the range Windy accepts, is left out. The path can be changed in the new **Dew Point** field under **Sensor Path Overrides (Advanced)**. The dew point is not shown on the dashboard line, which has no room for it, and a missing dew point is not counted on the `No data` line.
+- **Clock Check**: The observation time is the system clock of the server, and Windy refused an observation stamped 5 minutes ahead of its own clock. The plugin now compares the system clock with GNSS time from `navigation.datetime` and shows an error on the dashboard while the two differ by more than 60 seconds, judging each source of the time on its own and taking one that agrees as enough, naming the set-system-time plugin as a way to set the clock. Observations are still sent. Without `navigation.datetime` there is no check.
+- **Position Precision**: A new setting under **Vessel Identity & Sensors** rounds the position on the Windy map to about 100 m or about 1 km, as Windy shows the position of a public station to anyone. **Exact**, the default, sends five decimals as before, and an update to this version sends no station record while it stays **Exact**. Choosing another precision sends the record at the next report. The Movement Guard still measures from the real position.
+- **Wind Path Check**: Five wind paths that cannot give the wind over ground Windy expects are named on the dashboard as an error, with the path to choose: apparent wind speed, which includes the vessel's own speed, and the magnetic direction are still sent; an angle from the bow (`angleApparent`, `angleTrueWater` or `angleTrueGround`) is not a compass direction, and no direction is sent.
+
+### Changed
+- **Wind Over the Reporting Interval**: The wind speed sent is now the mean of the reporting interval, each value weighted by how long it stood, and the direction is the mean direction of the interval, weighted by the wind speed, so that 350° and 10° give 0° and the direction of a near calm counts little. The gust is the highest value of the gust path or of the wind speed in the interval. Weather stations report wind this way; before, the wind speed and direction were those of the moment of the report, so a report in a lull showed a calm between two gusts. Each report takes its own interval: the highest wind speed of an interval whose report did not reach Windy is no longer carried into the next report. A wind speed whose latest reading is older than the **Maximum Reading Age** or outside the range Windy accepts is left out, with the gust it gives, as before, and a value counts for no longer than the **Maximum Reading Age** after it was last delivered. When several sources publish a wind path and no source priority is set for it, the wind is now taken from the values of all of them; before, it was whichever value arrived last.
+- **Reporting Interval Description**: The description of the **Reporting Interval** names the limits of 5 and 1440 minutes and says that the wind speed and direction are averaged over the interval and that the gust is its highest wind speed.
+- **Screenshots**: The screenshots of the **Vessel Identity & Sensors**, **Transmission & Movement Guard** and **Sensor Path Overrides** sections were retaken and show the new settings.
+- **README and Migration Guide**: The README describes the wind over the reporting interval, the clock check, the position precision and the wind over ground Windy expects, with the paths that publish it. The migration guide says how the wind of the two plugins differs. The README's Troubleshooting section refers to the Clock Check for the time Windy accepts ahead of its clock, in place of "no time in the future", and the Known Limitations describe the wind taken from several sources of one path.
+
+### Fixed
+- **Gust in a Calm**: With no gust path and a wind speed of 0 throughout, no gust was sent; the gust is now 0.0.
+
 ## [1.7.0] - 2026-10-23
 
 ### Added
@@ -350,6 +367,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
+[1.8.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.4...v1.7.0
 [1.6.4]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.2...v1.6.3

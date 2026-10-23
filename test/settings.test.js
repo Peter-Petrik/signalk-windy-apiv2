@@ -2,12 +2,13 @@
 
 /*
  * Saved settings: values the form cannot produce but a configuration file
- * can hold, defaults applied without the form, the share option, and the
- * humidity path.
+ * can hold, defaults applied without the form, the share option, the
+ * humidity path and the position precision.
  */
 
 const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const {
   WARM_UP_MS, FIVE_MINUTES_MS,
   config, fullTree, createEnv, advance, setUp, tearDown
@@ -328,5 +329,52 @@ describe('humidity path', () => {
   it('does not fall back from a path the owner chose', async () => {
     const tree = fullTree()
     assert.equal(await humidityFor(tree, { humidity: 'environment.inside.humidity' }), undefined)
+  })
+})
+
+describe('position precision', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  /** The first station record sent with the given precision. */
+  async function recordWith (positionPrecision) {
+    const tree = fullTree()
+    tree.navigation.position.value = { latitude: 37.123456789, longitude: -23.987654321 }
+    const env = createEnv({ tree })
+    env.plugin.start(config(identity(positionPrecision === undefined ? {} : { positionPrecision })))
+    await advance(WARM_UP_MS)
+    env.plugin.stop()
+    return { body: env.puts()[0].body, env }
+  }
+
+  it('sends the exact position, to five decimals, by default', async () => {
+    const { body } = await recordWith(undefined)
+    assert.equal(body.lat, 37.12346)
+    assert.equal(body.lon, -23.98765)
+  })
+
+  it('rounds to three decimals for About 100 m', async () => {
+    const { body } = await recordWith('100m')
+    assert.equal(body.lat, 37.123)
+    assert.equal(body.lon, -23.988)
+  })
+
+  it('rounds to two decimals for About 1 km', async () => {
+    const { body } = await recordWith('1km')
+    assert.equal(body.lat, 37.12)
+    assert.equal(body.lon, -23.99)
+  })
+
+  it('sends the exact position for a value it does not know', async () => {
+    for (const value of ['constructor', 'toString', '10m', 3]) {
+      const { body } = await recordWith(value)
+      assert.equal(body.lat, 37.12346, `for ${value}`)
+    }
+  })
+
+  it('leaves the Movement Guard measuring from the real position', async () => {
+    const { env } = await recordWith('1km')
+    const state = JSON.parse(fs.readFileSync(env.stateFile, 'utf8'))
+    assert.deepEqual(state.lastSentPos, { lat: 37.123456789, lon: -23.987654321 })
   })
 })

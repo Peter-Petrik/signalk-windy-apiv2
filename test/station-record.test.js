@@ -46,7 +46,8 @@ describe('a setting the station record is built from', () => {
     'Station Type': withIdentity({ station_type: 'Catamaran' }),
     'Operator Website URL': withIdentity({ operator_url: 'https://example.org' }),
     'Station Elevation': withIdentity({ elevation: 4 }),
-    'Station ID': config({ credentials: { ...config().credentials, stationId: 'f0TEST02' } })
+    'Station ID': config({ credentials: { ...config().credentials, stationId: 'f0TEST02' } }),
+    'Position Precision': withIdentity({ positionPrecision: '100m' })
   }
 
   for (const [name, changed] of Object.entries(changes)) {
@@ -61,6 +62,25 @@ describe('a setting the station record is built from', () => {
     assert.equal(env.puts()[0].body.name, 'New Name')
     assert.equal(env.puts()[0].body.operator_text, 'New Name')
     assert.equal(env.puts()[0].body.agl_wind, 18)
+  })
+
+  it('sends nothing after an update from a version without the Position Precision setting, while it stays Exact', async () => {
+    // The key as 1.7.0 wrote it for config().
+    const key = JSON.stringify(['f0TEST01', 'Test Vessel', 'public', 10, 2, 'Boat (Signal K)', 'https://example.com', null])
+    for (const saved of [config(), withIdentity({ positionPrecision: 'exact' })]) {
+      const env = createEnv()
+      fs.writeFileSync(env.stateFile, JSON.stringify({ lastSentPos: { lat: 37.5, lon: 23.4 }, currentDistance: 0, nextRunTime: 0, hasReportedPosition: true, stationKey: key }))
+      env.plugin.start(saved)
+      await advance(WARM_UP_MS)
+      env.plugin.stop()
+      assert.deepEqual(env.requests.map((r) => r.method), ['GET'])
+    }
+  })
+
+  it('sends the record again when the Position Precision goes back to Exact', async () => {
+    const env = await afterSaving(withIdentity({ positionPrecision: '1km' }), config())
+    assert.deepEqual(env.requests.map((r) => r.method), ['PUT', 'GET'])
+    assert.equal(env.puts()[0].body.lat, 37.5)
   })
 
   it('sends nothing more when the configuration is saved unchanged', async () => {

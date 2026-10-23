@@ -27,9 +27,10 @@ const axios = require('axios')
 
 const createPlugin = require('../index.js')
 
-// 2025-10-09T08:53:20.000Z. Any fixed moment works; a fixed one keeps the
-// `ts` parameter and the saved schedule the same on every run.
-const START_TIME = 1760000000000
+// 2026-10-14T17:46:40.000Z. Any fixed moment after 2026-10-01 works: the
+// clock check ignores a GNSS time before then. A fixed one keeps the `ts`
+// parameter and the saved schedule the same on every run.
+const START_TIME = 1792000000000
 
 const WARM_UP_MS = 15000
 const FIVE_MINUTES_MS = 5 * 60 * 1000
@@ -116,6 +117,9 @@ function valuePaths (node, prefix = '') {
  *
  * Options:
  *   tree  the values the server holds when the plugin starts
+ *   held  further values the server holds, from other sources:
+ *         [{ path, value, timestamp, source }], handed over after the tree's
+ *         values
  *   live  true (the default) to have every value in the tree repeated once
  *         a minute, as a working sensor does; false for sensors that have
  *         stopped, which is what the tests of stale readings need
@@ -203,6 +207,9 @@ function createEnv (options = {}) {
             callback(delta(skPath, node.value, node.timestamp || new Date().toISOString()))
           }
         }
+        for (const held of options.held || []) {
+          if (subscription.paths.includes(held.path)) callback(delta(held.path, held.value, held.timestamp, held.source))
+        }
       }
     }
   }
@@ -211,16 +218,17 @@ function createEnv (options = {}) {
 
   /**
    * Updates one path, as a sensor does: the server keeps the value, and
-   * every subscription that asked for the path receives it.
+   * every subscription that asked for the path receives it, from the given
+   * source.
    */
-  env.emit = (skPath, value) => {
+  env.emit = (skPath, value, source = 'test') => {
     const timestamp = new Date().toISOString()
     const keys = skPath.split('.')
     let node = env.tree
     for (const key of keys.slice(0, -1)) node = node[key] = node[key] || {}
     node[keys[keys.length - 1]] = { value, timestamp }
     for (const subscription of [...env.subscriptions]) {
-      if (subscription.paths.includes(skPath)) subscription.callback(delta(skPath, value, timestamp))
+      if (subscription.paths.includes(skPath)) subscription.callback(delta(skPath, value, timestamp, source))
     }
   }
 
@@ -265,8 +273,8 @@ function createEnv (options = {}) {
 }
 
 /** One value as the server delivers it to a subscription. */
-function delta (skPath, value, timestamp) {
-  return { context: 'vessels.self', updates: [{ $source: 'test', timestamp, values: [{ path: skPath, value }] }] }
+function delta (skPath, value, timestamp, source = 'test') {
+  return { context: 'vessels.self', updates: [{ $source: source, timestamp, values: [{ path: skPath, value }] }] }
 }
 
 /**
