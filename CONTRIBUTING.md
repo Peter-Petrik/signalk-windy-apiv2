@@ -26,7 +26,7 @@ The plugin is plain JavaScript with no build step and one runtime dependency, `a
 | `index.js` | The plugin's lifecycle and schedule: start, stop, subscriptions, the countdown, and the order of the two requests in a reporting cycle. |
 | `lib/schema.js` | The configuration form, and the reading of a saved configuration with its defaults. |
 | `lib/readings.js` | The latest value of every subscribed path and the time it arrived. |
-| `lib/samples.js` | The values of the wind paths over the reporting interval: the mean, the highest value and the mean direction. |
+| `lib/samples.js` | The values of the wind paths over the reporting interval: the mean, the highest value, the highest 3-second mean and the mean direction. |
 | `lib/convert.js` | Readings to observation fields: age check, unit conversion, the gust rule, range checks. |
 | `lib/movement.js` | Distance from the last position sent to Windy. |
 | `lib/state.js` | Loading and saving `state.json`. |
@@ -75,6 +75,7 @@ The tests drive the plugin the way the Signal K server does: through the `app` o
 | `test/dashboard.test.js` | How long an error stays on the dashboard and what becomes its Last Error, Windy out of reach, the time and the countdown |
 | `test/station-record.test.js` | The station record sent again after a change of the settings it is built from |
 | `test/wind.test.js` | The wind over the reporting interval: the mean, the gust and the mean direction; a clock set back; wind paths that cannot give the wind Windy expects |
+| `test/wmo-gust.test.js` | The WMO gust: the highest 3-second mean, the Gust Calculation setting, the sampling rate it subscribes at |
 | `test/clock.test.js` | The system clock compared with GNSS time |
 | `test/state.test.js` | The state file and restarts |
 | `test/schema.test.js` | The configuration form |
