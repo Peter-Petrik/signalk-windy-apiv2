@@ -337,7 +337,9 @@ module.exports = function (app) {
     // from the same samples.
     //
     // `period: 1000` asks the server for at most one value per second and
-    // path. A path that is not updated delivers nothing.
+    // path; with the WMO gust, the wind speed is asked for at most four a
+    // second (see samplePeriod below). A path that is not updated delivers
+    // nothing.
     //
     // The server appends a function to `s.unsubscribes` for each path;
     // stop() calls them. Without that, every restart of the plugin left its
