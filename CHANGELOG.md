@@ -5,6 +5,19 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.1] - 2026-11-07
+
+### Added
+- **Note on Sources**: A note at the top of **Sensor Path Overrides (Advanced)** says that each field lists the Signal K sources its path was received from, and that a source priority under **Data > Priorities** makes a path take its readings from one source.
+
+### Changed
+- **Force GNSS Updates ([#11](https://github.com/Peter-Petrik/signalk-windy-apiv2/pull/11))**: The setting **Force GPS Updates** is titled **Force GNSS Updates**, and its help text, the README and the comments speak of the GNSS position in place of GPS, since most marine receivers use several satellite systems at once. The setting is still stored as `forceUpdate`, so existing configurations are unaffected. Contributed by Piotr (PiotrSol).
+- **README and Migration Guide**: The section Several Sources on One Path explains source priorities in short sentences. The Dashboard Status and Troubleshooting entries for the ⚠ are removed, and the Features line, the Known Limitations and the Migration Guide name the source list in place of the warning. The Compatibility section names the versions this release was run on.
+- **Screenshots**: The **Transmission & Movement Guard** and **Sensor Path Overrides** screenshots were retaken.
+
+### Removed
+- **Source Warning**: 1.10.0 put a warning at the top of the configuration form and a ⚠ at the start of the dashboard line when the values of a path changed source three times. A source priority does that as well when its preferred source pauses more than once and the server passes the next one each time, so 1.10.0 also warned of paths that had a priority. The plugin cannot tell the two apart: the server passes it values and source names, not the rule that passed them. Which source a path should come from is for the owner to decide, so the warning is removed. The form still lists the sources of each path.
+
 ## [1.10.0] - 2026-11-07
 
 ### Added
@@ -388,6 +401,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
+[1.10.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.7.0...v1.8.0

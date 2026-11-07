@@ -26,7 +26,7 @@ The plugin is plain JavaScript with no build step and one runtime dependency, `a
 | `index.js` | The plugin's lifecycle and schedule: start, stop, subscriptions, the countdown, and the order of the two requests in a reporting cycle. |
 | `lib/schema.js` | The configuration form, with the sources of the paths while the plugin runs, and the reading of a saved configuration with its defaults. |
 | `lib/readings.js` | The latest value of every subscribed path and the time it arrived. |
-| `lib/sources.js` | Which Signal K sources each subscribed path has received values from recently, and whether its values switch between them. |
+| `lib/sources.js` | Which Signal K sources each subscribed path has received values from recently. |
 | `lib/samples.js` | The values of the wind paths over the reporting interval: the mean, the highest value, the highest 3-second mean and the mean direction. |
 | `lib/convert.js` | Readings to observation fields: age check, unit conversion, the gust rule, range checks. |
 | `lib/movement.js` | Distance from the last position sent to Windy. |
@@ -78,7 +78,7 @@ The tests drive the plugin the way the Signal K server does: through the `app` o
 | `test/wind.test.js` | The wind over the reporting interval: the mean, the gust and the mean direction; a clock set back; wind paths that cannot give the wind Windy expects |
 | `test/wmo-gust.test.js` | The WMO gust: the highest 3-second mean, the Gust Calculation setting, the sampling rate it subscribes at |
 | `test/clock.test.js` | The system clock compared with GNSS time |
-| `test/sources.test.js` | Several sources on one path: the sources on the configuration form, the warning at its top and the ⚠ on the dashboard line, a pause of a prioritised source, the form when it cannot be built |
+| `test/sources.test.js` | The sources of each path on the configuration form and the note above them; no warning for several sources; the form when it cannot be built |
 | `test/state.test.js` | The state file and restarts |
 | `test/schema.test.js` | The configuration form |
 | `test/package.test.js` | App Store metadata in `package.json` and the format of `CHANGELOG.md` |

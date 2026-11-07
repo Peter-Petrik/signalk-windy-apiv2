@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.10.0 - source check, WMO gust dash, lint in CI
+ * v1.10.1 - source warning removed, Force GNSS Updates
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -62,7 +62,7 @@ const POSITION_PATH = 'navigation.position'
 const DATETIME_PATH = 'navigation.datetime'
 const CLOCK_TOLERANCE_MS = 60000
 // How long a GNSS time counts, and how far back the sources of a path are
-// counted, when the Maximum Reading Age is 0.
+// listed on the configuration form, when the Maximum Reading Age is 0.
 const DEFAULT_AGE_MS = 15 * 60000
 // A receiver without a fix may publish a time such as the GPS epoch of 1980.
 // A GNSS time before this plugin's release cannot be right and is ignored.
@@ -113,10 +113,9 @@ module.exports = function (app) {
   plugin.uiSchema = uiSchema
 
   // The form, read by the server each time the configuration page is opened.
-  // While the plugin runs, it shows which source each path is received from
-  // and warns of paths with several sources (see lib/sources.js). It must
-  // never throw: the server would show a form in its place that could
-  // overwrite the configuration when saved.
+  // While the plugin runs, it shows which sources each path is received from
+  // (see lib/sources.js). It must never throw: the server would show a form
+  // in its place that could overwrite the configuration when saved.
   plugin.schema = () => {
     try {
       return formSchema(sourceInfo(session))
@@ -151,8 +150,8 @@ module.exports = function (app) {
   /**
    * What the configuration form shows about the sources of the paths, or
    * null when no run is going on: `session` is null from stop() on, and
-   * stays null when the credentials are missing. Sources are counted from
-   * the start of the run, so a run younger than the time counted says so.
+   * stays null when the credentials are missing. Sources are listed from
+   * the start of the run, so a run younger than the time listed says so.
    */
   const sourceInfo = (s) => {
     if (!s) return null
@@ -165,8 +164,7 @@ module.exports = function (app) {
     return {
       span: now - s.startedAt < windowMs ? 'since the plugin started' : `in the last ${spanText(windowMs)}`,
       fieldPaths,
-      receiving: (skPath) => s.sources.list(skPath, now, windowMs),
-      several: s.sources.several(now, windowMs)
+      receiving: (skPath) => s.sources.list(skPath, now, windowMs)
     }
   }
 
@@ -215,13 +213,9 @@ module.exports = function (app) {
     const detail = unreachable
       ? `${unreachable.reason} since ${unreachable.since}`
       : s.noData || lastReportString
-    // A path whose values switch between sources lacks a source priority,
-    // or its preferred source keeps pausing. The configuration form names
-    // it; the dashboard row leads there.
-    const warning = s.sources.several(Date.now(), ageLimitMs(s)).length > 0 ? '\u26A0 ' : ''
     show(s, 'status', detail
-      ? `${warning}${countdown} | ${movementText(s)} | ${detail}`
-      : `${warning}${countdown} | ${movementText(s)}`)
+      ? `${countdown} | ${movementText(s)} | ${detail}`
+      : `${countdown} | ${movementText(s)}`)
   }
 
   /**
@@ -351,7 +345,7 @@ module.exports = function (app) {
       readings: createReadings(),
       // The sources each path has received live values from, and when.
       sources: createSources(),
-      // When this run started; sources are counted from here.
+      // When this run started; sources are listed from here.
       startedAt: Date.now(),
       // The recent values of the wind paths, which the wind, the gust and
       // the direction of a report are taken from.
@@ -412,12 +406,12 @@ module.exports = function (app) {
       DATETIME_PATH
     ])]
 
-    // The paths whose sources are counted (lib/sources.js): every path in
-    // use. GNSS time is left out, because the clock check judges each of its
-    // sources on its own, and so is the altitude while a Station Elevation
-    // is set, because it is then not read.
-    const watched = new Set(paths.filter((skPath) =>
-      skPath !== DATETIME_PATH && !(options.elevation !== null && ALTITUDE_PATHS.includes(skPath))))
+    // The paths whose sources the configuration form lists (lib/sources.js):
+    // those of the Sensor Path Overrides fields, the older humidity path
+    // among them.
+    const watched = new Set([
+      ...Object.entries(options.pathMap).flatMap(([key, skPath]) => (key === 'humidity' ? humidityPaths(skPath) : [skPath]))
+    ])
 
     // Which samples of the wind paths are kept. A value outside Windy's
     // range for its field is a sensor glitch and is not kept: the value
@@ -475,9 +469,9 @@ module.exports = function (app) {
           const taken = timedOut
             ? s.readings.markTimedOut(v.path, time, source)
             : s.readings.record(v.path, v.value, time, source)
-          // Every live value from a source counts towards the sources of a
-          // path in use (see `watched`). A null is a source without a value,
-          // not one that sends.
+          // Every live value of a listed path notes its source (see
+          // `watched`). A null is a source without a value, not one that
+          // sends.
           if (!fromCache && watched.has(v.path) && v.value !== null && v.value !== undefined) {
             s.sources.note(v.path, source, arrived)
           }

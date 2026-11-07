@@ -1,28 +1,25 @@
 'use strict'
 
 /*
- * Several sources on one path: without a source priority the Signal K server
- * passes the plugin the values of every source that publishes a path, and
- * the readings switch between them. The configuration form shows which
- * source each path is received from and warns of a path whose values switch
- * between sources, and the dashboard line starts with a warning triangle
- * while that lasts. A single pause of a prioritised source, after which the
- * server passes the next source for a while, does not raise the warning.
+ * The sources of each path on the configuration form. The form shows which
+ * sources each path is received from, and a note says where to set a source
+ * priority. The plugin does not judge the sources: several sources on a
+ * path raise no warning, on the form or on the dashboard.
  */
 
 const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert/strict')
 const {
-  WARM_UP_MS, FIVE_MINUTES_MS,
+  WARM_UP_MS,
   config, fullTree, createEnv, advance, setUp, tearDown
 } = require('../test-support/harness')
 const { schema } = require('../lib/schema')
-const { createSources, SWITCHES_FOR_WARNING } = require('../lib/sources')
+const { createSources } = require('../lib/sources')
 
 const SPEED = 'environment.wind.speedOverGround'
-const DATETIME = 'navigation.datetime'
-const ALTITUDE = 'navigation.gnss.antennaAltitude'
-const TRIANGLE = '⚠ '
+const TRIANGLE = '\u26A0'
+const NOTE = 'Under each path are the Signal K sources it was received from. ' +
+  'When a path lists more than one source and its readings should come from only one, set a source priority for it under Data > Priorities.'
 
 const logic = (overrides) => ({ logic: { interval: 5, minMove: 300, forceUpdate: false, ...overrides } })
 const pathField = (form, key) => form.properties.pathMap.properties[key]
@@ -38,7 +35,7 @@ async function startedEnv (overrides, envOptions = {}) {
   return env
 }
 
-/** A second source on a path, taking turns with "test" every second, as without a source priority. */
+/** A second source on a path, sending in the same seconds as "test", as without a source priority. */
 async function takeTurns (env, skPath, other, seconds, value = 4.0) {
   for (let i = 0; i < seconds; i++) {
     env.emit(skPath, value, other)
@@ -51,13 +48,13 @@ describe('a path received from one source', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 
-  it('is named on its configuration field, and the form carries no warning', async () => {
+  it('is named on its configuration field, under a note that says where to set a source priority', async () => {
     const env = await startedEnv()
     await advance(15 * 60000)
     const form = env.plugin.schema()
+    assert.equal(form.properties.pathMap.description, NOTE)
     assert.equal(pathField(form, 'windSpeed').description, 'Received from test in the last 15 minutes.')
     assert.equal(form.description, undefined)
-    assert.ok(!env.lastStatus().startsWith(TRIANGLE), env.lastStatus())
     env.plugin.stop()
   })
 
@@ -98,86 +95,42 @@ describe('a path received from one source', () => {
   })
 })
 
-describe('a path whose values switch between sources', () => {
+describe('a path received from several sources', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 
-  it('puts a warning at the top of the form and a triangle at the start of the dashboard line', async () => {
+  it('lists them all on its field, and raises no warning on the form or the dashboard', async () => {
     const env = await startedEnv()
-    await takeTurns(env, SPEED, 'derived-data', 2)
+    await takeTurns(env, SPEED, 'derived-data', 120)
     const form = env.plugin.schema()
-    assert.match(form.description, /^⚠ Values switching between several sources since the plugin started: environment\.wind\.speedOverGround \(derived-data, test\)\. /)
-    assert.match(form.description, /Data > Priorities/)
     assert.equal(pathField(form, 'windSpeed').description, 'Received from derived-data, test since the plugin started.')
-    assert.ok(env.lastStatus().startsWith(`${TRIANGLE}Next: `), env.lastStatus())
+    assert.equal(pathField(form, 'windDir').description, 'Received from test since the plugin started.')
+    assert.equal(form.description, undefined)
+    assert.ok(!JSON.stringify(form).includes(TRIANGLE))
+    assert.match(env.lastStatus(), /^Next: /)
+    assert.ok(env.statuses.every((line) => !line.includes(TRIANGLE)), env.lastStatus())
     env.plugin.stop()
   })
 
-  it('clears both once the values have not switched for the Maximum Reading Age', async () => {
+  it('lists a source that took over during a pause of another one until it has been silent for the time counted', async () => {
     const env = await startedEnv(logic({ maxAge: 5 }))
-    await takeTurns(env, SPEED, 'derived-data', 2)
-    assert.ok(env.lastStatus().startsWith(TRIANGLE))
-    await advance(5 * 60000)
-    assert.equal(env.plugin.schema().description, undefined)
-    assert.ok(!env.lastStatus().startsWith(TRIANGLE), env.lastStatus())
-    env.plugin.stop()
-  })
-
-  it('is counted over 15 minutes when the age check is switched off', async () => {
-    const env = await startedEnv(logic({ maxAge: 0 }))
-    await takeTurns(env, SPEED, 'derived-data', 2)
-    await advance(14 * 60000)
-    assert.match(env.plugin.schema().description, /\(derived-data, test\)/)
-    await advance(2 * 60000)
-    assert.equal(env.plugin.schema().description, undefined)
-    env.plugin.stop()
-  })
-
-  it('names every such path, and keeps the dashboard line within 80 characters', async () => {
-    const env = await startedEnv()
-    for (let i = 0; i < 2; i++) {
-      env.emit('navigation.position', { latitude: 37.5, longitude: 23.4 }, 'gps2')
-      env.emit('navigation.position', { latitude: 37.5, longitude: 23.4 }, 'test')
-      await takeTurns(env, SPEED, 'derived-data', 1)
-    }
-    await advance(FIVE_MINUTES_MS)
-    assert.match(env.plugin.schema().description, /environment\.wind\.speedOverGround \(derived-data, test\); navigation\.position \(gps2, test\)\./)
-    assert.ok(env.lastStatus().startsWith(TRIANGLE))
-    assert.ok(env.lastStatus().length <= 80, `${env.lastStatus().length}: ${env.lastStatus()}`)
-    env.plugin.stop()
-  })
-
-  it('leaves an error line as it is', async () => {
-    const env = await startedEnv({ pathMap: { windSpeed: 'environment.wind.speedApparent' } })
-    await takeTurns(env, 'environment.wind.speedApparent', 'other', 2, 6.0)
-    assert.match(env.plugin.schema().description, /environment\.wind\.speedApparent \(other, test\)/)
-    assert.equal(env.dashboard().type, 'error')
-    assert.ok(!env.dashboard().message.startsWith(TRIANGLE), env.dashboard().message)
+    env.emit(SPEED, 4.0, 'backup')
+    await advance(1000)
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from backup, test since the plugin started.')
+    await advance(5 * 60000 - 1000)
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from backup, test in the last 5 minutes.')
+    await advance(1000)
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test in the last 5 minutes.')
     env.plugin.stop()
   })
 })
 
-describe('what does not raise the warning', () => {
+describe('what is not listed', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 
-  it('one pause of the preferred source, during which the server passes the next one', async () => {
-    const env = await startedEnv()
-    // "test" pauses; the server passes "backup" for a while, then "test" again.
-    env.emit(SPEED, 4.0, 'backup')
-    await advance(1000)
-    env.emit(SPEED, 4.1, 'backup')
-    await advance(60000)
-    const form = env.plugin.schema()
-    assert.equal(pathField(form, 'windSpeed').description, 'Received from backup, test since the plugin started.')
-    assert.equal(form.description, undefined)
-    assert.ok(!env.lastStatus().startsWith(TRIANGLE), env.lastStatus())
-    env.plugin.stop()
-  })
-
   it('a value the server held from another source when the plugin started', async () => {
     const env = await startedEnv({}, { held: [{ path: SPEED, value: 3.0, timestamp: new Date().toISOString(), source: 'old' }] })
-    assert.equal(env.plugin.schema().description, undefined)
     assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test since the plugin started.')
     env.plugin.stop()
   })
@@ -190,33 +143,8 @@ describe('what does not raise the warning', () => {
       env.emit(SPEED, 4.0, 'test')
       await advance(1000)
     }
-    assert.equal(env.plugin.schema().description, undefined)
     assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test since the plugin started.')
     env.plugin.stop()
-  })
-
-  it('GNSS time from several sources, which the clock check judges one by one', async () => {
-    const env = await startedEnv()
-    for (let i = 0; i < 3; i++) {
-      const now = new Date().toISOString()
-      env.emit(DATETIME, now, 'gps1')
-      env.emit(DATETIME, now, 'gps2')
-      await advance(1000)
-    }
-    assert.equal(env.plugin.schema().description, undefined)
-    env.plugin.stop()
-  })
-
-  it('the altitude while a Station Elevation is set, because it is then not read', async () => {
-    const elevation = { identity: { ...config().identity, elevation: 3 } }
-    const env = await startedEnv(elevation)
-    await takeTurns(env, ALTITUDE, 'gps2', 3, 12)
-    assert.equal(env.plugin.schema().description, undefined)
-    env.plugin.stop()
-    const withoutElevation = await startedEnv()
-    await takeTurns(withoutElevation, ALTITUDE, 'gps2', 3, 12)
-    assert.match(withoutElevation.plugin.schema().description, /navigation\.gnss\.antennaAltitude \(gps2, test\)/)
-    withoutElevation.plugin.stop()
   })
 })
 
@@ -271,32 +199,6 @@ describe('the store of sources', () => {
     assert.deepEqual(sources.list('a', 6000, 10000), ['y', 'z'])
     assert.deepEqual(sources.list('a', 12000, 10000), ['y'])
     assert.deepEqual(sources.list('none', 0, 10000), [])
-  })
-
-  it('reports a path only once its values have changed source often enough within the window', () => {
-    const sources = createSources()
-    sources.note('a', 'x', 0)
-    for (let i = 1; i < SWITCHES_FOR_WARNING; i++) sources.note('a', i % 2 ? 'y' : 'x', i * 1000)
-    assert.deepEqual(sources.several(SWITCHES_FOR_WARNING * 1000, 60000), [])
-    sources.note('a', SWITCHES_FOR_WARNING % 2 ? 'y' : 'x', SWITCHES_FOR_WARNING * 1000)
-    assert.deepEqual(sources.several(SWITCHES_FOR_WARNING * 1000, 60000), [{ path: 'a', sources: ['x', 'y'] }])
-    // The changes age out of the window.
-    assert.deepEqual(sources.several(SWITCHES_FOR_WARNING * 1000 + 59500, 60000), [])
-  })
-
-  it('does not add up changes of source that lie further apart than the window', () => {
-    const sources = createSources()
-    // Three changes in the first seconds, then a long quiet spell from both.
-    sources.note('a', 'x', 0)
-    sources.note('a', 'y', 1000)
-    sources.note('a', 'x', 2000)
-    sources.note('a', 'y', 3000)
-    sources.note('a', 'y', 100000)
-    // One more change, long after the first three: both sources are recent,
-    // but only one change lies within the window.
-    sources.note('a', 'x', 101000)
-    assert.deepEqual(sources.list('a', 101000, 60000), ['x', 'y'])
-    assert.deepEqual(sources.several(101000, 60000), [])
   })
 
   it('counts a value without a source under one name', () => {

@@ -54,7 +54,7 @@ These are available after migration. Position Precision is chosen under **Vessel
 - **Dew Point** — `environment.outside.dewPointTemperature` is sent when a source publishes it.
 - **Clock Check** — an error on the dashboard while the system clock differs from GNSS time by more than 60 seconds.
 - **Position Precision** — the position on the Windy map can be rounded to about 100 m or about 1 km.
-- **Source Check** — the configuration form shows which Signal K source each sensor path comes from, and warns of a path whose values switch between several sources, as they do without a source priority.
+- **Sources on the Form** — the configuration form shows which Signal K sources each sensor path comes from.
 
 ## Migration Steps
 
