@@ -179,3 +179,50 @@ describe('the highest running mean of the samples', () => {
     assert.equal(s.maxRunningMean('w', 12000, 60000, 3000), 5)
   })
 })
+
+describe('the highest running mean of the samples, more cases', () => {
+  it('is null when no 3 seconds of values lie between the gaps', () => {
+    const s = createSamples(0)
+    s.add('w', null, 0)
+    s.add('w', 14, 10000)
+    s.add('w', null, 12000)
+    assert.equal(s.maxRunningMean('w', 0, 60000, 3000), null)
+  })
+
+  it('is found where a stretch ends on a step, after a burst shorter than 3 seconds', () => {
+    const s = createSamples(0)
+    s.add('w', 8, 0)
+    s.add('w', 10, 10000)
+    s.add('w', 2, 12000)
+    // The stretch 9 s to 12 s: (1 × 8 + 2 × 10) / 3.
+    assert.equal(s.maxRunningMean('w', 0, 60000, 3000), 28 / 3)
+  })
+
+  it('does not count a stretch with a gap of a few milliseconds', () => {
+    const s = createSamples(0)
+    s.add('w', 20, 0)
+    s.add('w', null, 1000)
+    s.add('w', 20, 1003)
+    assert.equal(s.maxRunningMean('w', 0, 3500, 3000), null)
+  })
+})
+
+describe('the WMO gust with a stale wind speed', () => {
+  beforeEach(setUp)
+  afterEach(tearDown)
+
+  it('is left out with the wind speed, although the interval holds earlier values', async () => {
+    const env = createEnv({ tree: fullTree(), live: false })
+    env.plugin.start(config({ logic: { interval: 5, minMove: 300, forceUpdate: false, gustMethod: 'wmo', maxAge: 1 } }))
+    await advance(WARM_UP_MS)
+    env.emit(SPEED, 7.0)
+    await advance(FIVE_MINUTES_MS - 10000)
+    // The temperature stays fresh, so that the report is sent.
+    env.emit('environment.outside.temperature', 293.15)
+    await advance(10000)
+    assert.equal(env.gets().length, 2)
+    assert.equal(lastParams(env).wind, undefined)
+    assert.equal(lastParams(env).gust, undefined)
+    env.plugin.stop()
+  })
+})
