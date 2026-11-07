@@ -69,7 +69,7 @@ The tests drive the plugin the way the Signal K server does: through the `app` o
 | `test/reporting.test.js` | What is sent, in which order and when; the movement guard |
 | `test/conversions.test.js` | Unit conversion, missing values, the gust rule, path overrides, the dew point |
 | `test/robustness.test.js` | Values that are not numbers, out-of-range readings, positions without coordinates, a cycle that fails |
-| `test/settings.test.js` | Zero values, defaults without the form, the share option, Force GPS Updates, station elevation, the humidity path, the position precision |
+| `test/settings.test.js` | Zero values, defaults without the form, the share option, Force GNSS Updates, station elevation, the humidity path, the position precision |
 | `test/stale.test.js` | Stale readings, paths the server declares timed out, values held by the server at start, the no-data line, wind and gust from the same samples, the wind window across failed and delayed reports |
 | `test/lifecycle.test.js` | Starting without credentials, stopping during a request, release of subscriptions |
 | `test/errors.test.js` | Rate limits, rejected requests, network errors, dashboard messages |

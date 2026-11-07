@@ -15,7 +15,7 @@ This is the only Signal K plugin targeting the Windy v2 API. Users of the legacy
 - **Rate Limit Awareness**: (v1.3.0+) Handles Windy's 429 rate limit responses by rescheduling precisely to the provided `retry_after` window instead of discarding observations or reporting errors.
 - **Stale Reading Protection**: (v1.6.0+) A sensor reading that has not been updated for 15 minutes is left out of the report, so a sensor that has stopped is not reported as current weather. The limit is a setting and can be switched off.
 - **Live Heartbeat Status**: Enhanced dashboard feedback showing countdown to next report, distance from baseline, current sensor readings, and last submission time. See [Dashboard Status](#dashboard-status).
-- **Radius-Based Movement Guard**: Intelligent GPS reporting that triggers map updates only when the vessel moves beyond a set radius from its last position, preventing "phantom movement" while at anchor.
+- **Radius-Based Movement Guard**: Intelligent GNSS position reporting that triggers map updates only when the vessel moves beyond a set radius from its last position, preventing "phantom movement" while at anchor.
 - **Wind Over the Reporting Interval**: (v1.8.0+) The wind speed sent is the mean of the reporting interval, the gust the highest value in it and the direction the mean direction, as weather stations report wind. Earlier versions sent the wind speed and direction of the moment of the report. See [Wind Over the Reporting Interval](#wind-over-the-reporting-interval).
 - **Clock Check**: (v1.8.0+) The system clock is compared with GNSS time from `navigation.datetime`, and the dashboard shows an error while the two differ by more than 60 seconds. See [Clock Check](#clock-check).
 - **Source Check**: (v1.10.0+) The configuration form shows which Signal K source each sensor path is received from. A path whose values switch between several sources, as they do when no source priority is set for it, is named at the top of the form, and the dashboard line starts with ⚠ while that lasts. See [Several Sources on One Path](#several-sources-on-one-path).
@@ -51,7 +51,7 @@ The plugin sends the station record to Windy before the observation when one of 
 1. No station update has succeeded yet, as after an installation or a full reset.
 2. The vessel has moved beyond the movement threshold from the position last sent.
 3. (v1.7.0+) One of these settings has changed since the last update Windy accepted: **Station ID**, **Display Name**, **Station Type**, **Operator Website URL**, **Share Option**, **Wind Sensor Height**, **Temperature Sensor Height**, **Station Elevation** or (v1.8.0+) **Position Precision**. A change of the GNSS altitude does not count. The first report after an update from a version earlier than 1.7.0 sends the record once for this reason, even at anchor.
-4. **Force GPS Updates** is on: the record is sent with every report.
+4. **Force GNSS Updates** is on: the record is sent with every report.
 
 Windy replaces the whole record with each update (see [Known Limitations](#known-limitations)).
 
@@ -86,7 +86,7 @@ Signal K server versions older than 2.35.1 have not been tested with this releas
 
 - **Windy station**: A station registered at [stations.windy.com](https://stations.windy.com), which provides the **Station ID** and the **Station Password**. Both are shown on the station's **Connection** tab under **My Stations**.
 - **Windy API key**: A key created on the API Keys page at [stations.windy.com](https://stations.windy.com).
-- **Position Data**: A valid GPS source providing `navigation.position`.
+- **Position Data**: A valid GNSS source providing `navigation.position`.
 - **Derived Data (Optional)**: For vessels without direct SOG or True Wind sensors, the `signalk-derived-data` plugin is recommended to provide the necessary calculated paths.
 
 ## Quick Start Guide
@@ -118,7 +118,7 @@ Next: 4m53s | Δ6m | W:4.1 G:5.6 D:306 T:20.5 P:101.9 H:64 | 20:43
 | Part | Meaning |
 | :--- | :--- |
 | `Next: 4m53s` | Time until the next report. `Warm:` during the 15 seconds after a start, `Resume:` when a countdown from before a restart is continued |
-| `Δ6m` | Distance from the position last sent to Windy. `Forced` in its place (v1.6.0+) while **Force GPS Updates** is on |
+| `Δ6m` | Distance from the position last sent to Windy. `Forced` in its place (v1.6.0+) while **Force GNSS Updates** is on |
 | `W:` `G:` `D:` `T:` `P:` `H:` | The readings of the last report: wind and gust in knots, direction in degrees, temperature in °C, pressure in kPa, humidity in percent |
 | `H:-` | (v1.6.0+) A reading exists for this field but was left out: older than the Maximum Reading Age, not a number, or outside the range Windy accepts. A field with no reading at all is not shown. With the WMO gust, `G:-` (v1.10.0+) marks a report whose wind speed was sent while no 3 seconds of live values gave a gust; before 1.10.0 the `G` field was left out |
 | `⚠` | (v1.10.0+) At the start of the line: the values of a path switch between several sources. The top of the configuration form names it (see [Several Sources on One Path](#several-sources-on-one-path)). An error line is shown without it |
