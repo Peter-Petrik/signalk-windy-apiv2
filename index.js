@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.9.0 - WMO gust option
+ * v1.10.0 - source check, WMO gust dash, lint in CI
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -30,6 +30,7 @@
  *   lib/schema.js    the configuration form and the reading of saved settings
  *   lib/readings.js  the latest value of every subscribed path, with its age
  *   lib/samples.js   the values of the wind paths over the reporting interval
+ *   lib/sources.js   which sources each path has received values from
  *   lib/convert.js   readings to observation fields, with range checks
  *   lib/movement.js  distance from the last position sent to Windy
  *   lib/state.js     loading and saving state.json
@@ -40,9 +41,10 @@
 
 const path = require('node:path')
 
-const { schema, uiSchema, resolveOptions } = require('./lib/schema')
+const { schema, uiSchema, formSchema, resolveOptions } = require('./lib/schema')
 const { createReadings } = require('./lib/readings')
 const { createSamples } = require('./lib/samples')
+const { createSources } = require('./lib/sources')
 const { buildObservation, dashboardText, noDataText, humidityPaths, isNumber, inRange, MAX_DIRECTION_RAD } = require('./lib/convert')
 const { isValidPosition, distanceMeters } = require('./lib/movement')
 const { loadState, saveState } = require('./lib/state')
@@ -59,8 +61,9 @@ const POSITION_PATH = 'navigation.position'
 // stamps every observation with the wrong time.
 const DATETIME_PATH = 'navigation.datetime'
 const CLOCK_TOLERANCE_MS = 60000
-// How long a GNSS time counts when the Maximum Reading Age is 0.
-const CLOCK_DEFAULT_AGE_MS = 15 * 60000
+// How long a GNSS time counts, and how far back the sources of a path are
+// counted, when the Maximum Reading Age is 0.
+const DEFAULT_AGE_MS = 15 * 60000
 // A receiver without a fix may publish a time such as the GPS epoch of 1980.
 // A GNSS time before this plugin's release cannot be right and is ignored.
 const EARLIEST_GNSS_TIME = Date.parse('2026-10-01T00:00:00Z')
@@ -107,8 +110,21 @@ module.exports = function (app) {
   plugin.id = 'signalk-windy-apiv2'
   plugin.name = 'Windy API v2 Reporter'
   plugin.description = 'Reports weather and position data to Windy.com API v2'
-  plugin.schema = schema
   plugin.uiSchema = uiSchema
+
+  // The form, read by the server each time the configuration page is opened.
+  // While the plugin runs, it shows which source each path is received from
+  // and warns of paths with several sources (see lib/sources.js). It must
+  // never throw: the server would show a form in its place that could
+  // overwrite the configuration when saved.
+  plugin.schema = () => {
+    try {
+      return formSchema(sourceInfo(session))
+    } catch (err) {
+      app.error(`Building the configuration form failed: ${err && err.stack ? err.stack : err}`)
+      return schema
+    }
+  }
 
   // Resolved on use and not at load time: the data directory is known to the
   // app object only once the server has set the plugin up.
@@ -120,6 +136,37 @@ module.exports = function (app) {
       saveState(stateFile(), s.state)
     } catch (err) {
       app.error(`Failed to save state file: ${err.message}`)
+    }
+  }
+
+  /** The Maximum Reading Age in milliseconds, or 15 minutes when it is 0. */
+  const ageLimitMs = (s) => (s.options.maxAge > 0 ? s.options.maxAge * 60000 : DEFAULT_AGE_MS)
+
+  /** A time span as text: whole seconds below two minutes, otherwise minutes. */
+  const spanText = (ms) => {
+    if (ms < 120000) return `${Math.round(ms / 1000)} seconds`
+    return `${Math.round(ms / 6000) / 10} minutes`
+  }
+
+  /**
+   * What the configuration form shows about the sources of the paths, or
+   * null when no run is going on: `session` is null from stop() on, and
+   * stays null when the credentials are missing. Sources are counted from
+   * the start of the run, so a run younger than the time counted says so.
+   */
+  const sourceInfo = (s) => {
+    if (!s) return null
+    const now = Date.now()
+    const windowMs = ageLimitMs(s)
+    const fieldPaths = {}
+    for (const [key, skPath] of Object.entries(s.options.pathMap)) {
+      fieldPaths[key] = key === 'humidity' ? humidityPaths(skPath) : [skPath]
+    }
+    return {
+      span: now - s.startedAt < windowMs ? 'since the plugin started' : `in the last ${spanText(windowMs)}`,
+      fieldPaths,
+      receiving: (skPath) => s.sources.list(skPath, now, windowMs),
+      several: s.sources.several(now, windowMs)
     }
   }
 
@@ -168,9 +215,13 @@ module.exports = function (app) {
     const detail = unreachable
       ? `${unreachable.reason} since ${unreachable.since}`
       : s.noData || lastReportString
+    // A path whose values switch between sources lacks a source priority,
+    // or its preferred source keeps pausing. The configuration form names
+    // it; the dashboard row leads there.
+    const warning = s.sources.several(Date.now(), ageLimitMs(s)).length > 0 ? '\u26A0 ' : ''
     show(s, 'status', detail
-      ? `${countdown} | ${movementText(s)} | ${detail}`
-      : `${countdown} | ${movementText(s)}`)
+      ? `${warning}${countdown} | ${movementText(s)} | ${detail}`
+      : `${warning}${countdown} | ${movementText(s)}`)
   }
 
   /**
@@ -185,7 +236,7 @@ module.exports = function (app) {
    * about the clock.
    */
   const clockProblem = (s) => {
-    const limitMs = s.options.maxAge > 0 ? s.options.maxAge * 60000 : CLOCK_DEFAULT_AGE_MS
+    const limitMs = ageLimitMs(s)
     const now = Date.now()
     let closest = null
     for (const clock of s.clocks.values()) {
@@ -298,6 +349,10 @@ module.exports = function (app) {
       options,
       state: loadState(stateFile(), (line) => app.debug(line)),
       readings: createReadings(),
+      // The sources each path has received live values from, and when.
+      sources: createSources(),
+      // When this run started; sources are counted from here.
+      startedAt: Date.now(),
       // The recent values of the wind paths, which the wind, the gust and
       // the direction of a report are taken from.
       samples: createSamples(options.maxAge * 60000),
@@ -357,6 +412,13 @@ module.exports = function (app) {
       DATETIME_PATH
     ])]
 
+    // The paths whose sources are counted (lib/sources.js): every path in
+    // use. GNSS time is left out, because the clock check judges each of its
+    // sources on its own, and so is the altitude while a Station Elevation
+    // is set, because it is then not read.
+    const watched = new Set(paths.filter((skPath) =>
+      skPath !== DATETIME_PATH && !(options.elevation !== null && ALTITUDE_PATHS.includes(skPath))))
+
     // Which samples of the wind paths are kept. A value outside Windy's
     // range for its field is a sensor glitch and is not kept: the value
     // before it goes on standing. A value that is not a number at all marks
@@ -413,6 +475,12 @@ module.exports = function (app) {
           const taken = timedOut
             ? s.readings.markTimedOut(v.path, time, source)
             : s.readings.record(v.path, v.value, time, source)
+          // Every live value from a source counts towards the sources of a
+          // path in use (see `watched`). A null is a source without a value,
+          // not one that sends.
+          if (!fromCache && watched.has(v.path) && v.value !== null && v.value !== undefined) {
+            s.sources.note(v.path, source, arrived)
+          }
           if (!taken) continue
           if (v.path in plausible) {
             // The server's cached value counts for the mean from its own time

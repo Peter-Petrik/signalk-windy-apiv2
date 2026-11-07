@@ -23,7 +23,8 @@ describe('plugin identity', () => {
 })
 
 describe('configuration schema', () => {
-  const schema = plugin.schema
+  // The server calls plugin.schema() each time the configuration page opens.
+  const schema = plugin.schema()
   const sections = schema.properties
 
   it('has the four sections in the order shown in the form', () => {
@@ -159,10 +160,10 @@ describe('form presentation', () => {
 
   it('refers only to fields that exist in the schema', () => {
     for (const [sectionName, section] of Object.entries(plugin.uiSchema)) {
-      assert.ok(plugin.schema.properties[sectionName], `uiSchema section ${sectionName} is not in the schema`)
+      assert.ok(plugin.schema().properties[sectionName], `uiSchema section ${sectionName} is not in the schema`)
       for (const fieldName of Object.keys(section)) {
         if (fieldName.startsWith('ui:')) continue
-        assert.ok(plugin.schema.properties[sectionName].properties[fieldName], `uiSchema field ${sectionName}.${fieldName} is not in the schema`)
+        assert.ok(plugin.schema().properties[sectionName].properties[fieldName], `uiSchema field ${sectionName}.${fieldName} is not in the schema`)
       }
     }
   })

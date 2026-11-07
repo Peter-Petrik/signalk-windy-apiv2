@@ -102,6 +102,31 @@ describe('the WMO gust', () => {
     env.plugin.stop()
   })
 
+  it('is marked with a dash on the dashboard when the wind is sent and no 3 seconds of live values give a gust', async () => {
+    // At the first report only the values the server held at the start have
+    // arrived, and they never count towards the WMO gust.
+    const env = await startedEnv(wmo())
+    assert.notEqual(lastParams(env).wind, undefined)
+    assert.equal(lastParams(env).gust, undefined)
+    assert.match(env.lastStatus(), / W:\d+\.\d G:- D:/)
+    // Live values with a gap every 2 seconds never cover 3 seconds either.
+    for (let i = 0; i < 150; i++) {
+      env.emit(SPEED, null)
+      await advance(1000)
+      env.emit(SPEED, 6.0)
+      await advance(1000)
+    }
+    assert.equal(lastParams(env).wind, '6.0')
+    assert.equal(lastParams(env).gust, undefined)
+    assert.match(env.lastStatus(), / W:11\.7 G:- D:/)
+    // Once 3 seconds are covered, the gust is back.
+    env.emit(SPEED, 6.0)
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(lastParams(env).gust, '6.0')
+    assert.match(env.lastStatus(), / W:11\.7 G:11\.7 D:/)
+    env.plugin.stop()
+  })
+
   it('subscribes to the wind speed four times a second and to every other path once a second', () => {
     const env = createEnv()
     env.plugin.start(config(wmo()))

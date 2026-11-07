@@ -10,6 +10,9 @@
 # credentials the plugin sends nothing, and the integration check
 # saves no configuration, so no CI run sends a request to Windy.
 #
+# `npm run lint` (standard) is passed as the blocking format check,
+# so a lint finding fails the run as a failing test does.
+#
 # The server versions are the current release and the two before
 # it. The two pinned versions need moving forward by hand when a
 # new server version is released.
@@ -43,9 +46,9 @@ on:
         default: npm run build --if-present
         type: string
       format-check-command:
-        description: 'Optional blocking format check, e.g. npm run prettier:check'
+        description: 'Blocking lint or format check'
         required: false
-        default: ''
+        default: npm run lint
         type: string
       coverage-command:
         description: 'Optional coverage command (replaces the test run), e.g. npm run coverage'
@@ -78,7 +81,8 @@ jobs:
       build-command: npm run build --if-present
       node-versions: '["22", "24"]'
       enable-signalk-integration: true
-      signalk-server-versions: '["2.32.0", "2.33.0", "latest"]'
+      signalk-server-versions: '["2.35.1", "2.36.0", "latest"]'
+      format-check-command: npm run lint
 
   # ── Manual runs (workflow_dispatch with custom inputs) ────
   test-plugin-manual:

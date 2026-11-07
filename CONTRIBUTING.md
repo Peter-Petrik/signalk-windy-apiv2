@@ -24,8 +24,9 @@ The plugin is plain JavaScript with no build step and one runtime dependency, `a
 | Path | Contents |
 | :--- | :--- |
 | `index.js` | The plugin's lifecycle and schedule: start, stop, subscriptions, the countdown, and the order of the two requests in a reporting cycle. |
-| `lib/schema.js` | The configuration form, and the reading of a saved configuration with its defaults. |
+| `lib/schema.js` | The configuration form, with the sources of the paths while the plugin runs, and the reading of a saved configuration with its defaults. |
 | `lib/readings.js` | The latest value of every subscribed path and the time it arrived. |
+| `lib/sources.js` | Which Signal K sources each subscribed path has received values from recently, and whether its values switch between them. |
 | `lib/samples.js` | The values of the wind paths over the reporting interval: the mean, the highest value, the highest 3-second mean and the mean direction. |
 | `lib/convert.js` | Readings to observation fields: age check, unit conversion, the gust rule, range checks. |
 | `lib/movement.js` | Distance from the last position sent to Windy. |
@@ -77,11 +78,20 @@ The tests drive the plugin the way the Signal K server does: through the `app` o
 | `test/wind.test.js` | The wind over the reporting interval: the mean, the gust and the mean direction; a clock set back; wind paths that cannot give the wind Windy expects |
 | `test/wmo-gust.test.js` | The WMO gust: the highest 3-second mean, the Gust Calculation setting, the sampling rate it subscribes at |
 | `test/clock.test.js` | The system clock compared with GNSS time |
+| `test/sources.test.js` | Several sources on one path: the sources on the configuration form, the warning at its top and the ⚠ on the dashboard line, a pause of a prioritised source, the form when it cannot be built |
 | `test/state.test.js` | The state file and restarts |
 | `test/schema.test.js` | The configuration form |
 | `test/package.test.js` | App Store metadata in `package.json` and the format of `CHANGELOG.md` |
 
 A change in behaviour needs a test that fails without it.
+
+### Lint
+
+```bash
+npm run lint
+```
+
+This runs [standard](https://standardjs.com), a development dependency installed by `npm install`. The plugin CI runs it as a blocking check, so a lint finding fails the run as a failing test does.
 
 ### Integration Check
 
@@ -89,14 +99,14 @@ A change in behaviour needs a test that fails without it.
 SIGNALK_URL=http://localhost:3000 npm run test:integration
 ```
 
-This runs `integration/server-check.js` against a running Signal K server that has the plugin installed and enabled with an empty configuration. It confirms that the server loads the plugin and that the plugin reports itself as not configured. The plugin CI runs it against a real server on every push. The check saves no configuration and must stay that way: with credentials the plugin sends requests to Windy.
+This runs `integration/server-check.js` against a running Signal K server that has the plugin installed and enabled with an empty configuration. It confirms that the server loads the plugin and that the plugin reports itself as not configured. The plugin CI runs it against a real server on every push. The check saves no configuration and must stay that way: with credentials the plugin sends requests to Windy. It needs Node.js 22 or later, which has `WebSocket` built in; the plugin CI runs it on Node.js 22 and 24.
 
 ## Pull Requests
 
 - One logical change per PR.
 - Include a clear description of what the change does and why.
 - Add an entry to `CHANGELOG.md` under the version being prepared. The file must not contain an `[Unreleased]` section when a version is tagged: the publish workflow copies the section for the tagged version into the GitHub Release, and the Signal K App Store shows that text.
-- Run `npm test`, and test against a running Signal K server before submitting. If live Windy API testing is not possible, note that in the PR description.
+- Run `npm test` and `npm run lint`, and test against a running Signal K server before submitting. If live Windy API testing is not possible, note that in the PR description.
 
 ## Releases
 

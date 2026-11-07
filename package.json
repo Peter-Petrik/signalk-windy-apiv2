@@ -1,11 +1,12 @@
 {
   "name": "signalk-windy-apiv2",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Signal K plugin to report weather data to Windy.com API v2 using optimized movement tracking and state persistence.",
   "main": "index.js",
   "scripts": {
     "test": "node --check index.js && node --test",
-    "test:integration": "node integration/server-check.js"
+    "test:integration": "node integration/server-check.js",
+    "lint": "standard"
   },
   "repository": {
     "type": "git",
@@ -56,5 +57,8 @@
     "LICENSE",
     "icon.svg",
     "screenshots/*.png"
-  ]
+  ],
+  "devDependencies": {
+    "standard": "17.1.2"
+  }
 }

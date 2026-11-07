@@ -5,6 +5,22 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-11-07
+
+### Added
+- **Source Check**: The configuration form shows, under **Sensor Path Overrides (Advanced)**, which Signal K sources each path has received values from within the **Maximum Reading Age**, or within 15 minutes when the age check is off, and since the start while the plugin has run for less than that. When the values of a path changed source three times or more in that time, the top of the form names the path and its sources, and the dashboard line starts with ⚠ until they have not for that long; an error line is shown without it. Without a source priority the Signal K server passes the plugin the values of every source, and the readings switch between them: on Signal K 2.36.0, two sources sending 4 m/s and 8 m/s on the wind speed path gave a report with wind 4.0 and gust 8.0, the wind from one source and the gust from the other. A source priority, set under **Data > Priorities** in the Signal K admin UI, makes the server pass the preferred source, and the next one only while the preferred one pauses; one such pause changes the source twice and raises no warning. A value the server held when the plugin started, a null, GNSS time and the altitude while a **Station Elevation** is set are not counted. The plugin does not average sources.
+- **Lint in CI**: `npm run lint` runs [standard](https://standardjs.com), added as a development dependency, which is not installed with the plugin. The Signal K plugin CI runs it as a blocking check, and the two findings it reported are fixed.
+
+### Changed
+- **CI Server Versions**: The integration check runs against Signal K server 2.35.1, 2.36.0 and the latest release, in place of 2.32.0, 2.33.0 and the latest.
+- **Dependencies in the Lock File**: `package-lock.json` resolves axios 1.21.0 and follow-redirects 1.16.2, the versions an install from npm resolves today. The lock file held follow-redirects 1.16.1, covered by a high-severity advisory ([GHSA-mrwp-f3q8-3g9p](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p)); the tests and CI use the lock file, an install of the plugin does not. The plugin follows no redirects. The axios range in `package.json` is unchanged.
+- **README**: A new section, Several Sources on One Path, describes what the Signal K server passes without a source priority and what the plugin shows. The Known Limitations no longer say that the wind of a report is taken from the values of all sources and that every other reading is whichever arrived last; the readings switch between the sources. The Troubleshooting section says that the dashboard shows the first 80 characters of a status and the configuration page all of it. The Compatibility section names the versions this release was tested on.
+- **Screenshot**: The **Sensor Path Overrides** screenshot was retaken and shows the sources of the paths.
+
+### Fixed
+- **Missing WMO Gust on the Dashboard**: With the WMO gust, a report whose wind speed was sent while no 3 seconds of live values gave a gust left the `G` field out of the dashboard line. It now shows `G:-`, as for any other reading that was left out.
+- **Several Sources in the 1.8.0 Notes**: The 1.8.0 entry below says that with several sources on a wind path and no source priority the wind is taken from the values of all of them. In a test on Signal K 2.36.0 it was not: the server passes the values of each second newest first, and the wind came from one source and the gust from the other. The Source Check above names such a path.
+
 ## [1.9.0] - 2026-11-07
 
 ### Added
@@ -372,6 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
+[1.10.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.6.4...v1.7.0

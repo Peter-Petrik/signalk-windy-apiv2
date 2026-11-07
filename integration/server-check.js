@@ -19,6 +19,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+/* global WebSocket */
+// WebSocket is a global from Node.js 22 on; the plugin CI runs this check on
+// Node.js 22 and 24.
+
 const assert = require('node:assert/strict')
 
 const BASE = (process.env.SIGNALK_URL || 'http://localhost:3000').replace(/\/$/, '')

@@ -204,8 +204,8 @@ describe('stop', () => {
   it('ignores a value delivered after the plugin was stopped', () => {
     const env = createEnv()
     env.plugin.start(config())
-    const { callback } = env.subscriptions[0]
+    const { callback: deliver } = env.subscriptions[0]
     env.plugin.stop()
-    assert.doesNotThrow(() => callback({ updates: [{ values: [{ path: 'navigation.position', value: { latitude: 1, longitude: 1 } }] }] }))
+    assert.doesNotThrow(() => deliver({ updates: [{ values: [{ path: 'navigation.position', value: { latitude: 1, longitude: 1 } }] }] }))
   })
 })
