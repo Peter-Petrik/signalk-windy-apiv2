@@ -5,7 +5,7 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.0] - 2026-11-04
+## [1.9.0] - 2026-11-07
 
 ### Added
 - **WMO Gust**: A new **Gust Calculation** setting under **Transmission & Movement Guard** offers the gust of the World Meteorological Organization (WMO-No. 8): the highest mean of the wind speed over any 3 seconds of the reporting interval. A single sample no longer decides the gust: one second of 20 m/s between values of 5 m/s gives a gust of 10.0, where the highest value gives 20.0. With this setting the **Wind Gust** path is not used, the wind speed is subscribed up to four times a second, the rate WMO-No. 8 gives for a 3-second mean, and a stretch of 3 seconds counts only when live values cover all of it. With a **Reporting Interval** of 10 minutes the wind and the gust sent follow the WMO definitions. No height correction is applied: Windy is told the **Wind Sensor Height**. **Highest value in the interval**, the default, keeps the gust of 1.8.0, so an update changes nothing until the setting is changed.
