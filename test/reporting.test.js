@@ -217,7 +217,7 @@ describe('movement guard', () => {
     env.plugin.stop()
   })
 
-  it('updates the station on every cycle when Force GPS Updates is on', async () => {
+  it('updates the station on every cycle when Force GNSS Updates is on', async () => {
     const env = await started({ logic: { interval: 5, minMove: 300, forceUpdate: true } })
     await advance(FIVE_MINUTES_MS)
     await advance(FIVE_MINUTES_MS)

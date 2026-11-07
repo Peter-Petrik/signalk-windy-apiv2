@@ -199,7 +199,7 @@ describe('share option', () => {
   })
 })
 
-describe('Force GPS Updates', () => {
+describe('Force GNSS Updates', () => {
   beforeEach(setUp)
   afterEach(tearDown)
 

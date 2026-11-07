@@ -57,7 +57,7 @@ describe('configuration schema', () => {
     assert.equal(sections.logic.properties.interval.type, 'integer')
   })
 
-  it('defaults to a 300 m movement threshold with Force GPS Updates off', () => {
+  it('defaults to a 300 m movement threshold with Force GNSS Updates off', () => {
     assert.equal(sections.logic.properties.minMove.default, 300)
     assert.equal(sections.logic.properties.forceUpdate.default, false)
   })

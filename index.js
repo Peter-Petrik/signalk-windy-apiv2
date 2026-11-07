@@ -172,7 +172,7 @@ module.exports = function (app) {
 
   /**
    * The second field of the dashboard line: the distance from the position
-   * last sent to Windy, or "Forced" while Force GPS Updates is on. With that
+   * last sent to Windy, or "Forced" while Force GNSS Updates is on. With that
    * setting on, the position is sent at every report whatever the distance,
    * and nothing else on the dashboard would show it.
    */
@@ -584,7 +584,7 @@ module.exports = function (app) {
    * Sends one report: the station record when it is due, then the observation.
    *
    * A station update is due when any of four conditions holds:
-   *   1. Force GPS Updates is switched on.
+   *   1. Force GNSS Updates is switched on.
    *   2. No station update has succeeded yet. This places the station on the
    *      map after a fresh install, a migration from the legacy plugin, or a
    *      reset of the state.
