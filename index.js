@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.8.0 - wind over the reporting interval, dew point, clock check, position precision, wind path check
+ * v1.9.0 - WMO gust option
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -73,6 +73,10 @@ const WINDOW_GAP_MS = 2 * 60000
 
 // Where the station elevation comes from when the owner has set none.
 const ALTITUDE_PATHS = ['navigation.gnss.antennaAltitude', 'navigation.altitude']
+
+// How often the wind speed is sampled when the gust is the WMO gust: four
+// times a second, the rate WMO-No. 8 gives for a 3-second mean.
+const WMO_SAMPLE_PERIOD_MS = 250
 
 /** A time as HH:MM on the server's clock, the same with every Node.js version and locale. */
 const clockText = (date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
@@ -333,7 +337,9 @@ module.exports = function (app) {
     // from the same samples.
     //
     // `period: 1000` asks the server for at most one value per second and
-    // path. A path that is not updated delivers nothing.
+    // path; with the WMO gust, the wind speed is asked for at most four a
+    // second (see samplePeriod below). A path that is not updated delivers
+    // nothing.
     //
     // The server appends a function to `s.unsubscribes` for each path;
     // stop() calls them. Without that, every restart of the plugin left its
@@ -363,6 +369,13 @@ module.exports = function (app) {
       [options.pathMap.windDir]: (value) => Math.abs(value) <= MAX_DIRECTION_RAD
     }
 
+    // The WMO gust is a mean over 3 seconds. WMO-No. 8 asks for the wind to
+    // be sampled at least four times a second for it, so with that gust the
+    // wind speed is subscribed at 250 ms; one value a second would let a
+    // single sample decide most of each 3 s mean. Every other path keeps one
+    // value a second.
+    const samplePeriod = (skPath) => (options.gustMethod === 'wmo' && skPath === options.pathMap.windSpeed ? WMO_SAMPLE_PERIOD_MS : 1000)
+
     // While subscribe() runs, the server hands over the value it holds for
     // each path, however old that value is. Those deliveries are told apart
     // from live ones by this flag: they are synchronous, so they all happen
@@ -371,7 +384,7 @@ module.exports = function (app) {
 
     app.subscriptionmanager.subscribe({
       context: 'vessels.self',
-      subscribe: paths.map((skPath) => ({ path: skPath, period: 1000 }))
+      subscribe: paths.map((skPath) => ({ path: skPath, period: samplePeriod(skPath) }))
     }, s.unsubscribes, (err) => app.error(err), (delta) => {
       if (!s.active || !delta || !Array.isArray(delta.updates)) return
       const arrived = Date.now()
@@ -547,7 +560,8 @@ module.exports = function (app) {
       nowMs: now,
       maxAgeMs,
       fromMs: windowStart,
-      sendDirection: options.sendDirection
+      sendDirection: options.sendDirection,
+      gustMethod: options.gustMethod
     }, debug)
 
     const positionReading = s.readings.read(POSITION_PATH, now, maxAgeMs)
