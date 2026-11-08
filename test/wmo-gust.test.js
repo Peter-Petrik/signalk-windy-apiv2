@@ -135,11 +135,40 @@ describe('the WMO gust', () => {
     }
     env.plugin.stop()
   })
+
+  it('does not subscribe to the Wind Gust path, and the form says that it is not used', async () => {
+    const env = createEnv({ tree: fullTree() })
+    env.plugin.start(config(wmo()))
+    assert.ok(!env.subscriptions[0].paths.includes(GUST))
+    await advance(60000)
+    env.emit(GUST, 15.0, 'other')
+    const field = env.plugin.schema().properties.pathMap.properties.windGust
+    assert.equal(field.description, 'Not used with Gust Calculation set to WMO.')
+    env.plugin.stop()
+  })
+
+  it('still reads a Wind Gust path that is also the wind speed path, as the wind speed', async () => {
+    const env = createEnv({ tree: fullTree(), live: false })
+    env.plugin.start(config({ ...wmo(), pathMap: { windGust: SPEED } }))
+    assert.ok(env.subscriptions[0].paths.includes(SPEED))
+    env.emit(SPEED, 6.0)
+    await advance(FIVE_MINUTES_MS)
+    assert.equal(lastParams(env).wind, '6.0')
+    assert.equal(lastParams(env).gust, '6.0')
+    env.plugin.stop()
+  })
 })
 
 describe('the default gust', () => {
   beforeEach(setUp)
   afterEach(tearDown)
+
+  it('subscribes to the Wind Gust path', () => {
+    const env = createEnv()
+    env.plugin.start(config())
+    assert.ok(env.subscriptions[0].paths.includes(GUST))
+    env.plugin.stop()
+  })
 
   it('is still the highest value, a single spike included', async () => {
     const env = await startedEnv()

@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.10.2 - source names in code style, XX explained
+ * v1.10.3 - Wind Gust path unused with WMO, help texts
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *
@@ -164,7 +164,8 @@ module.exports = function (app) {
     return {
       span: now - s.startedAt < windowMs ? 'since the plugin started' : `in the last ${spanText(windowMs)}`,
       fieldPaths,
-      receiving: (skPath) => s.sources.list(skPath, now, windowMs)
+      receiving: (skPath) => s.sources.list(skPath, now, windowMs),
+      gustUnused: s.options.gustMethod === 'wmo'
     }
   }
 
@@ -377,10 +378,11 @@ module.exports = function (app) {
     for (const problem of options.pathProblems) app.error(problem)
 
     // One subscription for everything the plugin reports: the position, the
-    // seven sensor paths, the altitude and the GNSS time. Every value that
-    // arrives is noted in `s.readings` with the time it came, which is what
-    // lets a reading that has stopped arriving be recognised as stale. The
-    // values of the three wind paths are also kept in `s.samples`, for the
+    // sensor paths (with the WMO gust, all but the Wind Gust path), the
+    // altitude and the GNSS time. Every value that arrives is noted in
+    // `s.readings` with the time it came, which is what lets a reading that
+    // has stopped arriving be recognised as stale. The values of the wind
+    // paths are also kept in `s.samples`, for the
     // mean, the gust and the direction of the reporting interval. Reports
     // are built from these alone, so the wind speed and the gust always come
     // from the same samples.
@@ -393,10 +395,13 @@ module.exports = function (app) {
     // The server appends a function to `s.unsubscribes` for each path;
     // stop() calls them. Without that, every restart of the plugin left its
     // subscriptions running for the life of the server process.
+    // With the WMO gust the Wind Gust path is not read (lib/convert.js), so
+    // it is not subscribed either.
+    const gustPaths = options.gustMethod === 'wmo' ? [] : [options.pathMap.windGust]
     const paths = [...new Set([
       POSITION_PATH,
       options.pathMap.windSpeed,
-      options.pathMap.windGust,
+      ...gustPaths,
       options.pathMap.windDir,
       options.pathMap.temp,
       options.pathMap.pressure,
@@ -407,10 +412,13 @@ module.exports = function (app) {
     ])]
 
     // The paths whose sources the configuration form lists (lib/sources.js):
-    // those of the Sensor Path Overrides fields, the older humidity path
-    // among them.
+    // those of the Sensor Path Overrides fields the plugin reads, the older
+    // humidity path among them.
     const watched = new Set([
-      ...Object.entries(options.pathMap).flatMap(([key, skPath]) => (key === 'humidity' ? humidityPaths(skPath) : [skPath]))
+      ...Object.entries(options.pathMap).flatMap(([key, skPath]) => {
+        if (key === 'windGust') return gustPaths
+        return key === 'humidity' ? humidityPaths(skPath) : [skPath]
+      })
     ])
 
     // Which samples of the wind paths are kept. A value outside Windy's

@@ -40,7 +40,7 @@ To find the new credentials, log in to [stations.windy.com](https://stations.win
 
 ### Wind
 
-The legacy plugin sends the highest wind speed since its last successful report as the gust; this plugin (v1.8.0+) the highest value of the gust path or of the wind speed in the reporting interval. The legacy plugin sends the median of the wind speed samples since its last successful report as the wind speed, and the latest direction. This plugin (v1.8.0+) sends the mean of the reporting interval, each value weighted by how long it stood, and the mean direction of the interval, weighted by the wind speed (see [Wind Over the Reporting Interval](README.md#wind-over-the-reporting-interval)). The median and the mean of the same wind are close but not equal, so the wind speed on Windy can differ slightly after the switch.
+The legacy plugin sends the highest wind speed since its last successful report as the gust; this plugin (v1.8.0+) the highest value of the gust path or of the wind speed in the reporting interval, or (v1.9.0+) with **Gust Calculation** set to **WMO** the highest 3-second mean of the wind speed. The legacy plugin sends the median of the wind speed samples since its last successful report as the wind speed, and the latest direction. This plugin (v1.8.0+) sends the mean of the reporting interval, each value weighted by how long it stood, and the mean direction of the interval, weighted by the wind speed (see [Wind Over the Reporting Interval](README.md#wind-over-the-reporting-interval)). The median and the mean of the same wind are close but not equal, so the wind speed on Windy can differ slightly after the switch.
 
 ### Features Not in the Legacy Plugin
 

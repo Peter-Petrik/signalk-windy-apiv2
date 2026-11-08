@@ -98,7 +98,17 @@ describe('configuration schema', () => {
   it('says that the wind is taken over the reporting interval, and names its limits', () => {
     const description = sections.logic.properties.interval.description
     assert.match(description, /from 5 to 1440/)
-    assert.match(description, /wind speed and direction sent are averaged over this interval, and the gust is its highest wind speed/)
+    assert.match(description, /wind speed and direction sent are averaged over this interval, and the gust is found in it as Gust Calculation sets\./)
+  })
+
+  it('says what a Reporting Interval shorter than 10 minutes gives with the WMO gust', () => {
+    assert.match(sections.logic.properties.gustMethod.description,
+      /With a shorter interval, the wind is the mean and the gust the highest 3-second mean of that shorter period\./)
+  })
+
+  it('says that the Global API Key sends the whole station record', () => {
+    assert.equal(sections.credentials.properties.apiKey.description,
+      'The API key created on the API Keys page at stations.windy.com. The plugin uses it to send the station record to Windy: the position, the name and the other station settings.')
   })
 
   it('offers three position precisions, with the exact position as the default', () => {

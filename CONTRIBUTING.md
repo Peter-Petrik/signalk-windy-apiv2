@@ -26,7 +26,7 @@ The plugin is plain JavaScript with no build step and one runtime dependency, `a
 | `index.js` | The plugin's lifecycle and schedule: start, stop, subscriptions, the countdown, and the order of the two requests in a reporting cycle. |
 | `lib/schema.js` | The configuration form, with the sources of the paths while the plugin runs, and the reading of a saved configuration with its defaults. |
 | `lib/readings.js` | The latest value of every subscribed path and the time it arrived. |
-| `lib/sources.js` | Which Signal K sources each subscribed path has received values from recently. |
+| `lib/sources.js` | Which Signal K sources the paths the Sensor Path Overrides fields read have received values from recently. |
 | `lib/samples.js` | The values of the wind paths over the reporting interval: the mean, the highest value, the highest 3-second mean and the mean direction. |
 | `lib/convert.js` | Readings to observation fields: age check, unit conversion, the gust rule, range checks. |
 | `lib/movement.js` | Distance from the last position sent to Windy. |
@@ -76,7 +76,7 @@ The tests drive the plugin the way the Signal K server does: through the `app` o
 | `test/dashboard.test.js` | How long an error stays on the dashboard and what becomes its Last Error, Windy out of reach, the time and the countdown |
 | `test/station-record.test.js` | The station record sent again after a change of the settings it is built from |
 | `test/wind.test.js` | The wind over the reporting interval: the mean, the gust and the mean direction; a clock set back; wind paths that cannot give the wind Windy expects |
-| `test/wmo-gust.test.js` | The WMO gust: the highest 3-second mean, the Gust Calculation setting, the sampling rate it subscribes at |
+| `test/wmo-gust.test.js` | The WMO gust: the highest 3-second mean, the Gust Calculation setting, the sampling rate it subscribes at, the Wind Gust path left unsubscribed and marked unused on the form |
 | `test/clock.test.js` | The system clock compared with GNSS time |
 | `test/sources.test.js` | The sources of each path on the configuration form and the note above them; no warning for several sources; the form when it cannot be built |
 | `test/state.test.js` | The state file and restarts |
@@ -105,7 +105,7 @@ This runs `integration/server-check.js` against a running Signal K server that h
 
 - One logical change per PR.
 - Include a clear description of what the change does and why.
-- Add an entry to `CHANGELOG.md` under the version being prepared. The file must not contain an `[Unreleased]` section when a version is tagged: the publish workflow copies the section for the tagged version into the GitHub Release, and the Signal K App Store shows that text.
+- Describe the change in the pull request; the maintainer writes the `CHANGELOG.md` entry with the release, under the version it ships in. The file never holds an `[Unreleased]` section: the publish workflow copies the section for the tagged version into the GitHub Release, and the Signal K App Store shows that text.
 - Run `npm test` and `npm run lint`, and test against a running Signal K server before submitting. If live Windy API testing is not possible, note that in the PR description.
 
 ## Releases

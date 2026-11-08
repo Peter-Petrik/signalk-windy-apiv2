@@ -209,10 +209,23 @@ describe('the store of sources', () => {
   })
 })
 
+describe('the help under the Wind Gust field', () => {
+  it('says which gust uses the path and what it should carry', () => {
+    assert.equal(uiSchema.pathMap.windGust['ui:help'],
+      "Used only by Gust Calculation 'Highest value'; it should carry a gust measured by the wind instrument. A gust another plugin derives may update rarely or include apparent wind; with WMO this path is not used.")
+    for (const key of Object.keys(DEFAULTS.pathMap).filter((key) => key !== 'windGust')) {
+      assert.equal(uiSchema.pathMap[key]['ui:help'], undefined, key)
+    }
+  })
+})
+
 describe('code style for source names', () => {
   it('is switched on for the line under each Sensor Path Overrides field, and not for the section, whose note is plain text', () => {
     for (const key of Object.keys(DEFAULTS.pathMap)) {
-      assert.deepEqual(uiSchema.pathMap[key], { 'ui:enableMarkdownInDescription': true }, key)
+      const expected = key === 'windGust'
+        ? { 'ui:enableMarkdownInDescription': true, 'ui:help': uiSchema.pathMap.windGust['ui:help'] }
+        : { 'ui:enableMarkdownInDescription': true }
+      assert.deepEqual(uiSchema.pathMap[key], expected, key)
     }
     assert.equal(uiSchema.pathMap['ui:enableMarkdownInDescription'], undefined)
     assert.equal(uiSchema['ui:enableMarkdownInDescription'], undefined)

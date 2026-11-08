@@ -5,6 +5,20 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.3] - 2026-11-08
+
+### Changed
+- **Wind Gust Path with the WMO Gust**: With **Gust Calculation** set to **WMO**, the plugin no longer subscribes to the **Wind Gust** path, which that gust does not read, and the line under the field on the configuration form says that it is not used, in place of listing the path's sources. A Wind Gust path that is also the Wind Speed path is still read as the wind speed.
+- **Wind Gust Help**: The **Wind Gust** field says that only the gust "Highest value" uses it, that it should carry a gust measured by the wind instrument, and that a gust another plugin derives may update rarely or include apparent wind.
+- **Gust Calculation Help**: The help says what an interval shorter than 10 minutes gives: the wind is the mean and the gust the highest 3-second mean of that shorter period.
+- **Pull Requests**: `CONTRIBUTING.md` asks contributors to describe a change in the pull request; the maintainer writes the `CHANGELOG.md` entry with the release. It asked for an entry under the version being prepared, which a contributor cannot know, while the changelog test rejects an `[Unreleased]` section.
+- **Screenshots**: The **Windy API Credentials**, **Transmission & Movement Guard** and **Sensor Path Overrides** screenshots were retaken.
+
+### Fixed
+- **Reporting Interval Help**: The help said that the gust is the highest wind speed of the interval, which is true only of the gust "Highest value" without a gust path. It now refers to Gust Calculation.
+- **Global API Key Help**: The help said that the key is used to update the position of the station. Each update sends the whole station record, and the help now says so.
+- **WMO Gust in the Documents**: The README Features list, the Mapped Data notes and the Migration Guide described only the gust "Highest value"; they name the WMO gust (v1.9.0+) as well. `CONTRIBUTING.md` and a comment described the source list as covering every subscribed path, while it covers the paths the Sensor Path Overrides fields read.
+
 ## [1.10.2] - 2026-11-07
 
 ### Changed
@@ -408,6 +422,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
+[1.10.3]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.10.2...v1.10.3
 [1.10.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.9.0...v1.10.0
