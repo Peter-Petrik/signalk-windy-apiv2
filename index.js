@@ -1,6 +1,6 @@
 /*
  * Signal K Windy API v2 Reporter
- * v1.10.1 - source warning removed, Force GNSS Updates
+ * v1.10.2 - source names in code style, XX explained
  * Reports data to Windy using separate observation (GET) and metadata (PUT) endpoints.
  * Includes Movement Guard and Independent State Persistence.
  *

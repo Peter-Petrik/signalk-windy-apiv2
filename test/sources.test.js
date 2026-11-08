@@ -13,7 +13,7 @@ const {
   WARM_UP_MS,
   config, fullTree, createEnv, advance, setUp, tearDown
 } = require('../test-support/harness')
-const { schema } = require('../lib/schema')
+const { schema, uiSchema, DEFAULTS } = require('../lib/schema')
 const { createSources } = require('../lib/sources')
 
 const SPEED = 'environment.wind.speedOverGround'
@@ -53,14 +53,14 @@ describe('a path received from one source', () => {
     await advance(15 * 60000)
     const form = env.plugin.schema()
     assert.equal(form.properties.pathMap.description, NOTE)
-    assert.equal(pathField(form, 'windSpeed').description, 'Received from test in the last 15 minutes.')
+    assert.equal(pathField(form, 'windSpeed').description, 'Received from `test` in the last 15 minutes.')
     assert.equal(form.description, undefined)
     env.plugin.stop()
   })
 
   it('is counted since the start while the plugin has run for less than the time counted', async () => {
     const env = await startedEnv()
-    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test since the plugin started.')
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from `test` since the plugin started.')
     env.plugin.stop()
   })
 
@@ -72,11 +72,11 @@ describe('a path received from one source', () => {
 
   it('names the time counted in seconds below two minutes and in minutes above', async () => {
     const env = await startedEnv(logic({ maxAge: 0.5 }))
-    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test in the last 30 seconds.')
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from `test` in the last 30 seconds.')
     env.plugin.stop()
     const longer = await startedEnv(logic({ maxAge: 2.5 }))
     await advance(3 * 60000)
-    assert.equal(pathField(longer.plugin.schema(), 'windSpeed').description, 'Received from test in the last 2.5 minutes.')
+    assert.equal(pathField(longer.plugin.schema(), 'windSpeed').description, 'Received from `test` in the last 2.5 minutes.')
     longer.plugin.stop()
   })
 
@@ -88,9 +88,9 @@ describe('a path received from one source', () => {
     env.plugin.start(config())
     await advance(WARM_UP_MS + 60000)
     assert.equal(pathField(env.plugin.schema(), 'humidity').description,
-      'Received from test on environment.outside.relativeHumidity since the plugin started.')
+      'Received from `test` on `environment.outside.relativeHumidity` since the plugin started.')
     env.emit('environment.outside.humidity', 0.7, 'other')
-    assert.equal(pathField(env.plugin.schema(), 'humidity').description, 'Received from other since the plugin started.')
+    assert.equal(pathField(env.plugin.schema(), 'humidity').description, 'Received from `other` since the plugin started.')
     env.plugin.stop()
   })
 })
@@ -103,8 +103,8 @@ describe('a path received from several sources', () => {
     const env = await startedEnv()
     await takeTurns(env, SPEED, 'derived-data', 120)
     const form = env.plugin.schema()
-    assert.equal(pathField(form, 'windSpeed').description, 'Received from derived-data, test since the plugin started.')
-    assert.equal(pathField(form, 'windDir').description, 'Received from test since the plugin started.')
+    assert.equal(pathField(form, 'windSpeed').description, 'Received from `derived-data`, `test` since the plugin started.')
+    assert.equal(pathField(form, 'windDir').description, 'Received from `test` since the plugin started.')
     assert.equal(form.description, undefined)
     assert.ok(!JSON.stringify(form).includes(TRIANGLE))
     assert.match(env.lastStatus(), /^Next: /)
@@ -116,11 +116,11 @@ describe('a path received from several sources', () => {
     const env = await startedEnv(logic({ maxAge: 5 }))
     env.emit(SPEED, 4.0, 'backup')
     await advance(1000)
-    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from backup, test since the plugin started.')
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from `backup`, `test` since the plugin started.')
     await advance(5 * 60000 - 1000)
-    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from backup, test in the last 5 minutes.')
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from `backup`, `test` in the last 5 minutes.')
     await advance(1000)
-    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test in the last 5 minutes.')
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from `test` in the last 5 minutes.')
     env.plugin.stop()
   })
 })
@@ -131,7 +131,7 @@ describe('what is not listed', () => {
 
   it('a value the server held from another source when the plugin started', async () => {
     const env = await startedEnv({}, { held: [{ path: SPEED, value: 3.0, timestamp: new Date().toISOString(), source: 'old' }] })
-    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test since the plugin started.')
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from `test` since the plugin started.')
     env.plugin.stop()
   })
 
@@ -143,7 +143,7 @@ describe('what is not listed', () => {
       env.emit(SPEED, 4.0, 'test')
       await advance(1000)
     }
-    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from test since the plugin started.')
+    assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, 'Received from `test` since the plugin started.')
     env.plugin.stop()
   })
 })
@@ -206,5 +206,29 @@ describe('the store of sources', () => {
     sources.note('a', undefined, 0)
     sources.note('a', null, 0)
     assert.deepEqual(sources.list('a', 0, 1000), ['unknown'])
+  })
+})
+
+describe('code style for source names', () => {
+  it('is switched on for the line under each Sensor Path Overrides field, and not for the section, whose note is plain text', () => {
+    for (const key of Object.keys(DEFAULTS.pathMap)) {
+      assert.deepEqual(uiSchema.pathMap[key], { 'ui:enableMarkdownInDescription': true }, key)
+    }
+    assert.equal(uiSchema.pathMap['ui:enableMarkdownInDescription'], undefined)
+    assert.equal(uiSchema['ui:enableMarkdownInDescription'], undefined)
+    assert.ok(!/[`*]/.test(NOTE))
+  })
+
+  it('shows a backtick or a backslash in a source name as an apostrophe, so that the code span holds', async () => {
+    setUp()
+    try {
+      const env = await startedEnv()
+      env.emit(SPEED, 4.0, 'odd`name')
+      env.emit(SPEED, 4.0, 'end\\')
+      assert.equal(pathField(env.plugin.schema(), 'windSpeed').description, "Received from `end'`, `odd'name`, `test` since the plugin started.")
+      env.plugin.stop()
+    } finally {
+      tearDown()
+    }
   })
 })

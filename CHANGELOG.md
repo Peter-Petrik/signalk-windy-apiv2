@@ -5,6 +5,13 @@ All notable changes to the Signal K Windy API v2 Reporter will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] - 2026-11-07
+
+### Changed
+- **Source Names in Code Style**: The line under each **Sensor Path Overrides (Advanced)** field shows the source names, and the older humidity path when the field reads it, in code style, so that they stand apart from the sentence. The Signal K admin UI renders code style in field descriptions only, so the note at the top of the section stays plain text. A backtick or backslash in a source name is shown as an apostrophe.
+- **README**: The section Several Sources on One Path says that a source name ending in `.XX` is one whose source gives no talker ID, for which Signal K puts `XX` in its place.
+- **Screenshot**: The **Sensor Path Overrides** screenshot was retaken.
+
 ## [1.10.1] - 2026-11-07
 
 ### Added
@@ -401,6 +408,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Proof of Concept**: Validated basic GET requests to Windy's `/pws/update/` endpoint using standard station credentials.
 - **Dynamic Location Foundation**: Developed the initial code for handling "moving" stations (Boats/Vessels) within the Windy ecosystem.
 
+[1.10.2]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/Peter-Petrik/signalk-windy-apiv2/compare/v1.8.0...v1.9.0
